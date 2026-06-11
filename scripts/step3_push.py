@@ -2,7 +2,9 @@
 Step 3: Build daily HTML + Push to amruta-daily-archive via push_article.js
 Input: /tmp/article_raw.json, /tmp/pairs.json, /tmp/email_body.html
 """
-import json, subprocess, os, re, datetime
+import json, subprocess, os, re, datetime, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from aliyun_translate import extract_words, build_word_map
 
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
     article = json.load(f)
@@ -22,11 +24,20 @@ sahaja_link = ""
 if os.path.exists("/tmp/sahaja_link.txt"):
     with open("/tmp/sahaja_link.txt", encoding="utf-8") as f:
         sahaja_link = f.read().strip()
-        print(f"[step3] sahaja_link.txt: [{sahaja_link[:60]}...]")
 else:
-    print("[step3] sahaja_link.txt NOT FOUND")
+    print("[step3] sahaja_link.txt NOT FOUND (OK if first run)")
 source_url = sahaja_link or article.get("link", "")
-print(f"[step3] source_url: {source_url}")
+
+# 阿里云翻译：预翻译文章中所有独特英文单词
+ak_id = os.environ.get("ALIYUN_ACCESS_KEY_ID", "")
+ak_secret = os.environ.get("ALIYUN_ACCESS_KEY_SECRET", "")
+word_map = {}
+if ak_id and ak_secret:
+    words = extract_words(pairs)
+    print(f"[step3] 提取到 {len(words)} 个独特单词，开始阿里云翻译...")
+    if words:
+        word_map = build_word_map(words, ak_id, ak_secret)
+        print(f"[step3] 阿里云翻译完成: {len(word_map)}/{len(words)} 个单词")
 
 # Extract Chinese title from email_body.html
 title_cn = title_en
@@ -38,7 +49,7 @@ if os.path.exists("/tmp/email_body.html"):
         title_cn = m.group(1).strip()
 
 payload = {"date": date, "title": title_en, "titleCn": title_cn,
-           "sourceUrl": source_url, "pairs": pairs}
+           "sourceUrl": source_url, "pairs": pairs, "wordMap": word_map}
 
 with open("/tmp/push_input.json", "w", encoding="utf-8") as f:
     json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -46,7 +57,7 @@ with open("/tmp/push_input.json", "w", encoding="utf-8") as f:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 result = subprocess.run(
     ["node", os.path.join(script_dir, "push_article.js"), "--file", "/tmp/push_input.json"],
-    capture_output=True, text=True, timeout=120, env=os.environ.copy()
+    capture_output=True, text=True, timeout=180, env=os.environ.copy()
 )
 print(result.stdout)
 if result.stderr:
