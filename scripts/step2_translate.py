@@ -722,6 +722,9 @@ if not pairs:
                             else:
                                 md_body = md_content
 
+                            # 统一换行符（COS下载的文件可能是 \r\n）
+                            md_body = md_body.replace('\r\n', '\n')
+
                             # 用原有的解析器处理正文
                             print(f"[translate_article] MD 正文前200字: {md_body[:200].replace(chr(10),' ')}")
                             candidate = parse_sahaja_full_text(md_body)
