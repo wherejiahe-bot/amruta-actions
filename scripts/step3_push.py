@@ -20,9 +20,13 @@ date = cur_year + mm_dd
 # sahaja link
 sahaja_link = ""
 if os.path.exists("/tmp/sahaja_link.txt"):
-    with open("/tmp/sahaja_link.txt") as f:
+    with open("/tmp/sahaja_link.txt", encoding="utf-8") as f:
         sahaja_link = f.read().strip()
+        print(f"[step3] sahaja_link.txt: [{sahaja_link[:60]}...]")
+else:
+    print("[step3] sahaja_link.txt NOT FOUND")
 source_url = sahaja_link or article.get("link", "")
+print(f"[step3] source_url: {source_url}")
 
 # Extract Chinese title from email_body.html
 title_cn = title_en
