@@ -1,0 +1,866 @@
+
+def run():
+    import urllib.request
+    import json
+    import datetime
+
+    # 北京时间
+    now_utc = datetime.datetime.utcnow()
+    cn_time = now_utc + datetime.timedelta(hours=8)
+    month = str(cn_time.month).zfill(2)
+    day = str(cn_time.day).zfill(2)
+    date_str = cn_time.strftime("%Y-%m-%d")
+
+    url = f"https://amruta.today/wp-json/everyday-ui/v1/talks/lang/en/month/{month}/day/{day}"
+    print(f"Fetching: {url}")
+
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    if not data:
+        raise ValueError(f"API returned empty array for {date_str}")
+
+    item = data[0]
+    title = item.get("title", "")
+    if isinstance(title, dict):
+        title = title.get("rendered", "")
+
+    # 去除日期后缀
+    raw_date = item.get("date", date_str)
+    date_clean = raw_date.split(" ")[0] if " " in raw_date else raw_date[:10]
+
+    # 去除正文 HTML 标签
+    import re
+    content_raw = item.get("content", "")
+    if isinstance(content_raw, dict):
+        content_raw = content_raw.get("rendered", "")
+    content_text = re.sub(r"<[^>]+>", "", content_raw).strip()
+
+    link = item.get("link", "")
+
+    article = {
+        "date": date_clean,
+        "title": title,
+        "content": content_text,
+        "link": link
+    }
+
+    with open("/workspace/article_raw.json", "w", encoding="utf-8") as f:
+        json.dump(article, f, ensure_ascii=False, indent=2)
+
+    print(f"✅ 文章获取成功: {date_clean} — {title}")
+    return {"article_json": article}
+
+
+def run(article, **kwargs):
+    import json, re, subprocess as sp, os
+    from datetime import datetime
+
+    date_str = article["date"]
+    title_en = article["title"]
+    content  = article["content"]
+    link     = article.get("link", "")
+
+    sahaja_link = None
+    pairs = []
+
+    def polish_title(zh):
+        """对提取出的标题做语感优化"""
+        zh = zh.replace('承担起', '肩负起').replace('承担', '肩负')
+        # 去掉末尾多余的连接语
+        zh = re.sub(r'(来起作用的|起作用的|来发挥作用的)$', '', zh).strip()
+        # 去掉开头的连接状语（通过…、在…、当…等）
+        zh = re.sub(r'^(通过你们|通过我们|通过|在于|由于|因为|当你们|当我们)', '', zh).strip()
+        return zh
+
+    def extract_title_cn_from_pairs(pairs_list, en_title):
+        """
+        从 pairs 中找含 title_en 所有词的英文段，
+        然后在对应中文段里找含对应译词的子句作为标题。
+        """
+        keywords = [w.strip('.,!?"\'-()').lower() for w in en_title.split() if len(w.strip('.,!?"\'-()')) > 2]
+        if not keywords:
+            return None
+
+        for en, zh in pairs_list:
+            if not zh.strip():
+                continue
+            en_lower = en.lower()
+            # 要求命中全部关键词
+            if all(kw in en_lower for kw in keywords):
+                # 在英文段里按句号/逗号找到含所有关键词的子句
+                en_sents = re.split(r'[.,]', en)
+                zh_sents = re.split(r'[，。]', zh)
+
+                for i, es in enumerate(en_sents):
+                    es_lower = es.lower()
+                    if all(kw in es_lower for kw in keywords):
+                        # 取对应位置的中文子句（按比例映射）
+                        ratio = i / max(len(en_sents) - 1, 1)
+                        zh_idx = round(ratio * (len(zh_sents) - 1))
+                        zh_part = zh_sents[zh_idx].strip() if zh_idx < len(zh_sents) else ""
+                        if len(zh_part) > 4:
+                            return polish_title(zh_part)
+                # fallback：直接在中文段里按逗号拆，找含动词短语的
+                for part in re.split(r'[，。；]', zh):
+                    part = part.strip()
+                    if 4 < len(part) <= 20:
+                        return polish_title(part)
+
+        return None
+
+    title_cn = title_en  # 先设 fallback，找到 pairs 后再更新
+
+    # ================================================================== #
+    # 优先路径：读取当日缓存
+    # ================================================================== #
+    SAHAJA_CACHE = "/workspace/sahaja_live_content.json"
+
+    def parse_sahaja_full_text(full_text):
+        """解析 sahaja.live 中英交替段落，返回 [(en, zh), ...] pairs"""
+        def is_zh_block(text):
+            cn = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+            return cn >= 3
+
+        blocks = [b.strip() for b in re.split(r'\n{2,}', full_text) if b.strip()]
+
+        def is_meta_block(b):
+            """判断是否为头部元信息行（日期、地点、语言说明、译注等）"""
+            if is_zh_block(b):
+                return True
+            if re.match(r'^\d{1,2}\s+\w+\s+\d{4}', b):  # "11 June 1989"
+                return True
+            if re.search(r'\d{4}年', b):  # 含中文年份
+                return True
+            if any(kw in b for kw in ['Talk Language', 'Transcript', 'VERIFIED', 'NEEDED',
+                                       '以下翻译', '供大家参考', 'subtitles', 'Subtitles']):
+                return True
+            # 纯地名行：含括号国家名，无动词
+            if (re.search(r'\((?:United States|USA|UK|India|France|Italy|Australia|Germany|Spain)\)', b)
+                    and not re.search(r'\b(is|are|was|were|have|has|will|can|should|must|know|think|feel|decide|come|go)\b', b, re.I)):
+                return True
+            # 元信息重复行：含年份数字 + 地名关键词且无动词
+            if (re.search(r'\b(19|20)\d{2}\b', b)
+                    and re.search(r'\b(USA|UK|India|France|Italy|Australia|Camp|Puja)\b', b)
+                    and not re.search(r'\b(is|are|was|were|have|has|will|can|should|must|know|think|feel|decide)\b', b, re.I)):
+                return True
+            return False
+
+        result = []
+        i = 0
+        # 跳过头部元信息，找到正文起点（第一个非元信息的英文段）
+        while i < len(blocks):
+            b = blocks[i]
+            if not is_meta_block(b) and len(b) > 40 and re.search(r'[A-Z][a-z]', b):
+                break
+            i += 1
+
+        while i < len(blocks):
+            en_block = blocks[i]
+            if is_zh_block(en_block):
+                i += 1
+                continue
+            if i + 1 < len(blocks) and is_zh_block(blocks[i + 1]):
+                zh_block = blocks[i + 1]
+                result.append([en_block, zh_block])
+                i += 2
+            else:
+                result.append([en_block, ""])
+                i += 1
+
+        return result
+
+    def has_chinese(pairs_list):
+        return any(zh.strip() for _, zh in pairs_list)
+
+    def fetch_post_pairs(post_id, cookie_file, ua):
+        """抓取指定 post_id 的内容，返回 (pairs, sahaja_link, title_cn, text_raw)"""
+        r = sp.run(
+            ['curl', '-s', '-b', cookie_file, '-H', f'User-Agent: {ua}',
+             f'https://www.sahaja.live/wp-json/wp/v2/posts/{post_id}'],
+            capture_output=True, text=True
+        )
+        post_data = json.loads(r.stdout)
+        html = post_data.get('content', {}).get('rendered', '')
+        text_raw = re.sub(r'<[^>]+>', '\n', html)
+        for ent, rep in [('&amp;','&'),('&#038;','&'),('&#8211;','–'),
+                          ('&#8217;',"'"),('&#8216;',"'"),('&#8220;','"'),('&#8221;','"'),
+                          ('&nbsp;',' ')]:
+            text_raw = text_raw.replace(ent, rep)
+        raw_title = post_data.get('title', {}).get('rendered', '')
+        t_cn = re.sub(r'^\d{4}-\d{2}-\d{2}\s*', '', raw_title).strip()
+        s_link = post_data.get('link', '')
+        candidate = parse_sahaja_full_text(text_raw)
+        return candidate, s_link, t_cn, text_raw
+
+    if os.path.exists(SAHAJA_CACHE):
+        try:
+            with open(SAHAJA_CACHE) as f:
+                cached = json.load(f)
+            cached_date = cached.get("date", "")
+            full_text = cached.get("full_text", "")
+            if cached_date == date_str and full_text:
+                candidate = parse_sahaja_full_text(full_text)
+                if has_chinese(candidate):
+                    pairs = candidate
+                    sahaja_link = cached.get("source_url", link)
+                    extracted = extract_title_cn_from_pairs(pairs, title_en)
+                    if extracted:
+                        title_cn = extracted
+                    print(f"[translate_article] ✅ 使用 sahaja.live 缓存 {date_str}，配对数: {len(pairs)}")
+                else:
+                    print(f"[translate_article] 缓存无中文，走在线搜索")
+            else:
+                print(f"[translate_article] 缓存日期 {cached_date} ≠ 今日 {date_str}，走在线搜索")
+        except Exception as e:
+            print(f"[translate_article] 读取缓存失败: {e}")
+
+    # ================================================================== #
+    # 在线抓取：登录后用英文标题搜索
+    # ================================================================== #
+    if not pairs:
+        UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        COOKIE_FILE = "/tmp/sahaja_session.txt"
+
+        # 每次全新登录
+        if os.path.exists(COOKIE_FILE):
+            os.remove(COOKIE_FILE)
+
+        r_login_page = sp.run(
+            ['curl', '-s', '-c', COOKIE_FILE, '-H', f'User-Agent: {UA}',
+             'https://www.sahaja.live/login/'],
+            capture_output=True, text=True
+        )
+        nonce_m = re.search(r'piereg_login_form_nonce.*?value="([^"]+)"', r_login_page.stdout, re.DOTALL)
+
+        if not nonce_m:
+            print("[translate_article] ❌ 无法获取登录 nonce（可能被 Cloudflare 拦截）")
+        else:
+            nonce = nonce_m.group(1)
+            sp.run(
+                ['curl', '-s', '-L', '-b', COOKIE_FILE, '-c', COOKIE_FILE,
+                 '-H', f'User-Agent: {UA}',
+                 '-H', 'Referer: https://www.sahaja.live/login/',
+                 '--data-urlencode', 'log=17338708029',
+                 '--data-urlencode', 'pwd=jsm108108',
+                 '-d', f'rememberme=forever&piereg_login_form_nonce={nonce}&_wp_http_referer=%2Flogin%2F&wp-submit=Log+In&redirect_to=&testcookie=1',
+                 'https://www.sahaja.live/login/'],
+                capture_output=True, text=True
+            )
+            print("[translate_article] 登录完成")
+
+            # 构建搜索词列表：优先英文标题，其次正文关键词
+            def title_keywords(t, max_words=5):
+                """取标题前几个有意义的词"""
+                words = [w for w in t.split() if len(w) > 2]
+                return ' '.join(words[:max_words])
+
+            def content_keywords(text, max_words=6):
+                lines = [l.strip() for l in text.split('\n') if l.strip()]
+                for line in lines:
+                    if re.match(r'^\d', line): continue
+                    if len(line) < 20: continue
+                    words = line.split()[:max_words]
+                    return ' '.join(words)
+                return ""
+
+            search_queries = []
+            tq = title_keywords(title_en)
+            if tq:
+                search_queries.append(tq)
+            cq = content_keywords(content)
+            if cq and cq != tq:
+                search_queries.append(cq)
+
+            for sq in search_queries:
+                sq_encoded = sq.replace(' ', '+')
+                print(f"[translate_article] 搜索关键词: {sq}")
+                r_search = sp.run(
+                    ['curl', '-s', '-b', COOKIE_FILE, '-H', f'User-Agent: {UA}',
+                     f'https://www.sahaja.live/wp-json/wp/v2/posts?search={sq_encoded}&per_page=10'],
+                    capture_output=True, text=True
+                )
+                try:
+                    posts = json.loads(r_search.stdout)
+                    if not isinstance(posts, list):
+                        posts = []
+                except Exception:
+                    posts = []
+                    print(f"[translate_article] ❌ 搜索结果解析失败")
+
+                print(f"[translate_article] 搜索结果数: {len(posts)}")
+
+                for p in posts:
+                    pid = p['id']
+                    candidate, s_link, t_cn, text_raw = fetch_post_pairs(pid, COOKIE_FILE, UA)
+                    if has_chinese(candidate):
+                        pairs = candidate
+                        sahaja_link = s_link
+                        # 从正文 pairs 提取 title_cn，找不到则保留英文
+                        extracted = extract_title_cn_from_pairs(pairs, title_en)
+                        if extracted:
+                            title_cn = extracted
+                            print(f"[translate_article] 标题译文: {title_cn}")
+                        print(f"[translate_article] ✅ 命中 post_id={pid} 「{t_cn}」，配对数: {len(pairs)}")
+
+                        cache_data = {
+                            "date": date_str,
+                            "title_en": title_en,
+                            "title_cn": title_cn,
+                            "source_url": sahaja_link,
+                            "post_id": pid,
+                            "full_text": text_raw,
+                            "pairs": []
+                        }
+                        with open(SAHAJA_CACHE, "w", encoding="utf-8") as f:
+                            json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                        break
+                    else:
+                        print(f"[translate_article] post_id={pid} 无中文，跳过")
+
+                if pairs:
+                    break
+
+            if not pairs:
+                print(f"[translate_article] ❌ 所有搜索词均未找到中文译文")
+
+    # ================================================================== #
+    # 句级对齐：用 amruta 英文句在 sahaja pairs 段落中匹配中文句
+    # ================================================================== #
+    def split_sentences(text):
+        """按句号/问号/感叹号+空格+大写字母拆分英文句"""
+        sents = re.split(r'(?<=[.!?])\s+(?=[A-Z"\'(])', text.strip())
+        return [s.strip() for s in sents if len(s.strip()) > 10]
+
+    def sentence_similarity(s1, s2):
+        """计算两个英文句的词重叠率"""
+        w1 = set(re.findall(r'\b\w{4,}\b', s1.lower()))
+        w2 = set(re.findall(r'\b\w{4,}\b', s2.lower()))
+        if not w1 or not w2:
+            return 0
+        return len(w1 & w2) / min(len(w1), len(w2))
+
+    # 英文关键词 → 中文对应词典（用于在中文句里定位）
+    EN_ZH_DICT = {
+        'advertisement': '广告', 'photographs': '照片', 'photograph': '照片',
+        'responsibility': '责任', 'shouldering': '承担', 'spread': '传播',
+        'establish': '体系', 'shoulders': '肩膀', 'strong': '坚强',
+        'hanging': '飘荡', 'aeroplane': '飞机', 'freedom': '自由',
+        'liberation': '解脱', 'binding': '束缚', 'attached': '依恋',
+        'grow': '成长', 'personality': '个性', 'impressed': '打动',
+        'vicious': '恶性', 'circle': '循环', 'build': '建设',
+        'deep': '深入', 'dynamic': '活力', 'great': '伟大',
+        'transitory': '短暂', 'eternal': '永恒', 'detached': '解脱',
+        'subtler': '微妙', 'light': '光明', 'purpose': '目的',
+        'watch': '观察', 'subtle': '微妙', 'tagging': '拖累',
+        'dwarfy': '渺小', 'limited': '有限',
+        'carry': '承担', 'carrying': '承担',
+        'fuel': '油', 'fly': '飞', 'flying': '飞',
+        'inside': '内心', 'outside': '外在',
+        'hand': '辅相成', 'amazed': '惊讶',
+        'involved': '陷入', 'seeking': '寻求',
+        'free': '自由', 'using': '利用',
+        'grow': '成长', 'growing': '成长', 'growth': '成长',
+    }
+
+    def en_sent_to_zh_keywords(en_sent):
+        """把英文句的关键词翻成中文，用于在中文句里匹配"""
+        words = re.findall(r'\b[a-z]{4,}\b', en_sent.lower())
+        zh_kws = []
+        for w in words:
+            if w in EN_ZH_DICT:
+                zh_kws.append(EN_ZH_DICT[w])
+        return zh_kws
+
+    def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
+        """
+        对每句 amruta 英文：
+        1. 在 sahaja 段级 pairs 英文里找最匹配的段落
+        2. 把英文句关键词翻成中文，在中文段的子句里找命中最多的那句
+        """
+        stopwords = {'that','this','with','have','your','from','they','them',
+                     'will','what','when','into','been','were','also','just',
+                     'more','than','then','there','their','which','still','only',
+                     'such','very','even','does','dont','cant','wont','should'}
+        en_keywords = set(re.findall(r'\b[a-z]{4,}\b', en_sent.lower())) - stopwords
+
+        if not en_keywords:
+            return ""
+
+        # Step 1: 找最匹配的 sahaja 段落（英文段关键词重叠最多）
+        best_score = 0
+        best_zh_para = ""
+        best_en_para = ""
+        for en_para, zh_para in sahaja_pairs:
+            if not zh_para.strip():
+                continue
+            para_words = set(re.findall(r'\b[a-z]{4,}\b', en_para.lower())) - stopwords
+            score = len(en_keywords & para_words) / max(len(en_keywords), 1)
+            if score > best_score:
+                best_score = score
+                best_zh_para = zh_para
+                best_en_para = en_para
+
+        if best_score < 0.2 or not best_zh_para:
+            return ""
+
+        # Step 2: 把英文句关键词翻成中文
+        zh_kws = en_sent_to_zh_keywords(en_sent)
+
+        # Step 3: 中文段按句拆分，找命中中文关键词最多的子句
+        zh_sents = [s.strip() for s in re.split(r'[。！？]', best_zh_para) if len(s.strip()) > 3]
+        if not zh_sents:
+            return best_zh_para
+
+        if zh_kws:
+            best_zh_score = -1
+            best_zh_sent = zh_sents[0]
+            for zs in zh_sents:
+                if used_zh and zs in used_zh:
+                    continue  # 跳过已用过的句子
+                sc = sum(1 for kw in zh_kws if kw in zs)
+                if sc > best_zh_score:
+                    best_zh_score = sc
+                    best_zh_sent = zs
+            return best_zh_sent
+
+        # 没有中文关键词时，按位置比例映射
+        en_sents_in_para = split_sentences(best_en_para)
+        sent_idx = 0
+        best_sub = 0
+        for idx, es in enumerate(en_sents_in_para):
+            es_words = set(re.findall(r'\b[a-z]{4,}\b', es.lower())) - stopwords
+            sc = len(en_keywords & es_words) / max(len(en_keywords), 1)
+            if sc > best_sub:
+                best_sub = sc
+                sent_idx = idx
+        ratio = sent_idx / max(len(en_sents_in_para) - 1, 1)
+        zh_idx = round(ratio * (len(zh_sents) - 1))
+        return zh_sents[min(zh_idx, len(zh_sents) - 1)]
+
+    if pairs:
+        amruta_sents = split_sentences(content)
+        if amruta_sents:
+            # ---------------------------------------------------------------- #
+            # 核心对齐策略：
+            # sahaja.live 的英文段和中文段是严格顺序对应的。
+            # 1. 在 sahaja pairs 中找包含 amruta 英文内容的那些段落（锚定段）
+            # 2. 把锚定段的中文按句拆开，展成一个有序中文句列表
+            # 3. amruta 英文句按顺序从该列表逐句取中文——不猜测，不跳跃
+            # ---------------------------------------------------------------- #
+
+            stopwords = {'that','this','with','have','your','from','they','them',
+                         'will','what','when','into','been','were','also','just',
+                         'more','than','then','there','their','which','still','only',
+                         'such','very','even','does','dont','cant','wont','should'}
+
+            # 步骤1：用 amruta 第一句和最后一句在 sahaja pairs 中定位起止段落
+            def best_para_for_sent(en_s, sahaja_pairs_list):
+                kws = set(re.findall(r'\b[a-z]{4,}\b', en_s.lower())) - stopwords
+                best_sc, best_pi = 0, 0
+                for pi, (ep, zp) in enumerate(sahaja_pairs_list):
+                    if not zp.strip(): continue
+                    ep_words = set(re.findall(r'\b[a-z]{4,}\b', ep.lower())) - stopwords
+                    if not ep_words: continue
+                    sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
+                    if sc > best_sc:
+                        best_sc, best_pi = sc, pi
+                return best_pi
+
+            first_pi = best_para_for_sent(amruta_sents[0], pairs)
+            last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
+            if last_pi < first_pi:
+                last_pi = first_pi
+
+            # 步骤2：逐段对齐
+            # 对每个锚定段：
+            #   a) 把该段英文按句拆分，计算 amruta 中有几句来自本段（关键词匹配）
+            #   b) 对应取本段中文的前 N 句分给这些英文句（N = 本段英文句数）
+            # 目的：sahaja 中文段里「传播霎哈嘉瑜伽并建立其体系是你们的责任」
+            # 这类附属句与英文 [08] 同属一句，不单独对应一句 amruta 英文。
+
+            # 先把 amruta 每句分配到最匹配的 sahaja 段落
+            amruta_to_para = []
+            for en_sent in amruta_sents:
+                pi = best_para_for_sent(en_sent, pairs[first_pi:last_pi+1])
+                amruta_to_para.append(first_pi + pi)
+
+            from collections import defaultdict
+            para_to_amruta = defaultdict(list)
+            for order, pi in enumerate(amruta_to_para):
+                para_to_amruta[pi].append(order)
+
+            # 对每个段落：词典精准锚定 + 附属句合并
+            # 策略：
+            #   1. 第一轮：每句 amruta 按词典词找最匹配的 zh 子句（主句锚点）
+            #   2. 第二轮：每个主句锚点，向后收集紧邻的「孤儿」zh 子句（未被任何 order 锚定的），
+            #              合并为一条完整中文（主句 + 附属句，用「。」连接）
+            #   这样 [08] 的「传播霎哈嘉瑜伽并建立其体系是你们的责任」就会被合并进来
+            result_map = {}
+            for pi in range(first_pi, last_pi + 1):
+                if pi not in para_to_amruta:
+                    continue
+                orders = para_to_amruta[pi]
+                zp = pairs[pi][1]
+                zh_subs = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) > 3]
+                if not zh_subs:
+                    for order in orders:
+                        result_map[order] = ""
+                    continue
+
+                # 第一轮：词典精准锚定每句 amruta → 一个主 zh_idx
+                zh_claimed = {}   # zh_idx -> order（被哪句 amruta 认领）
+                anchored   = {}   # order  -> zh_idx
+                for order in orders:
+                    en_s = amruta_sents[order]
+                    zh_kws = en_sent_to_zh_keywords(en_s)
+                    if not zh_kws:
+                        continue
+                    best_sc, best_zi = 0, -1
+                    for zi, zs in enumerate(zh_subs):
+                        if zi in zh_claimed:
+                            continue
+                        sc = sum(1 for kw in zh_kws if kw in zs)
+                        if sc > best_sc:
+                            best_sc, best_zi = sc, zi
+                    if best_sc >= 1 and best_zi >= 0:
+                        anchored[order]       = best_zi
+                        zh_claimed[best_zi]   = order
+
+                # 未锚定的 order 按顺序取剩余 zh 子句
+                remaining = [zi for zi in range(len(zh_subs)) if zi not in zh_claimed]
+                ri = 0
+                for order in orders:
+                    if order not in anchored:
+                        if ri < len(remaining):
+                            anchored[order]             = remaining[ri]
+                            zh_claimed[remaining[ri]]   = order
+                            ri += 1
+                        else:
+                            anchored[order] = len(zh_subs) - 1
+
+                # 第二轮：收集每个主锚点之后未被认领的连续「孤儿」子句，合并进主句
+                # 按锚点 zh_idx 排序，确定每个 order 的「领地」范围
+                order_by_zi = sorted(anchored.items(), key=lambda x: x[1])  # [(order, zi), ...]
+                for rank, (order, zi) in enumerate(order_by_zi):
+                    # 找下一个 order 的 zh_idx（作为本 order 领地的上边界，不含）
+                    next_zi = order_by_zi[rank + 1][1] if rank + 1 < len(order_by_zi) else len(zh_subs)
+                    # 收集 zi+1 到 next_zi-1 之间未被其他 order 认领的孤儿句
+                    group = [zh_subs[zi]]
+                    for k in range(zi + 1, next_zi):
+                        if k not in zh_claimed or zh_claimed[k] == order:
+                            group.append(zh_subs[k])
+                    result_map[order] = "。".join(group)
+
+            # 步骤3：按原始顺序组装
+            aligned = []
+            for order, en_sent in enumerate(amruta_sents):
+                aligned.append([en_sent, result_map.get(order, "")])
+
+            print(f"[translate_article] 锚定段落 [{first_pi}~{last_pi}]，para分组: {dict(para_to_amruta)}")
+
+            pairs = aligned
+            cn_count = sum(1 for _, zh in pairs if zh.strip())
+            print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
+
+            # ---------------------------------------------------------------- #
+            # 审核：逐句验证英文与中文的对应度，自动修正
+            # 规则（按优先级）：
+            #   P0 中文为空/过短(<4字) → 在锚定段中文库里找最佳句
+            #   P1 有词典词但中文完全不含任何一个译词 → 在锚定段中文库里找最佳句替换
+            #   P2 重复中文句（同一中文句出现≥2次）→ 在锚定段中文库里找不重复的最佳候选
+            # ---------------------------------------------------------------- #
+
+            # 建立锚定段落的全量中文子句库（供审核修正用）
+            zh_pool = []
+            for pi in range(first_pi, last_pi + 1):
+                if pi >= len(pairs): break
+                zp = pairs[pi][1]
+                for zs in re.split(r'[。！？]', zp):
+                    zs = zs.strip()
+                    if len(zs) > 3:
+                        zh_pool.append(zs)
+
+            def best_zh_from_flat(en_s, exclude_set=None):
+                """在锚定段中文库中找词典词命中最多的句子"""
+                zh_kws = en_sent_to_zh_keywords(en_s)
+                if not zh_kws:
+                    return ""
+                best_sc, best_zs = 0, ""
+                for zs in zh_pool:
+                    if exclude_set and zs in exclude_set:
+                        continue
+                    sc = sum(1 for kw in zh_kws if kw in zs)
+                    if sc > best_sc:
+                        best_sc, best_zs = sc, zs
+                return best_zs if best_sc >= 1 else ""
+
+            print("\n" + "="*60)
+            print("[审核+修正] 逐句质量检查")
+            print("="*60)
+            zh_seen = {}
+            fixed_count = 0
+
+            for idx in range(len(pairs)):
+                en_s, zh_s = pairs[idx]
+                tag, reason, fixed = "✅", "", False
+
+                # P0：中文为空或过短
+                if not zh_s.strip() or len(zh_s.strip()) < 4:
+                    new_zh = best_zh_from_flat(en_s)
+                    if new_zh:
+                        pairs[idx][1] = new_zh
+                        zh_s = new_zh
+                        tag, reason, fixed = "🔧", f"P0修正→「{new_zh[:20]}」", True
+
+                # P1：词典词完全未命中
+                if not fixed and zh_s.strip():
+                    zh_kws_check = en_sent_to_zh_keywords(en_s)
+                    if zh_kws_check:
+                        hit = sum(1 for kw in zh_kws_check if kw in zh_s)
+                        if hit == 0:
+                            new_zh = best_zh_from_flat(en_s, exclude_set={zh_s})
+                            if new_zh and new_zh != zh_s:
+                                old_zh = zh_s
+                                pairs[idx][1] = new_zh
+                                zh_s = new_zh
+                                tag = "🔧"
+                                reason = f"P1修正:「{old_zh[:12]}」→「{new_zh[:12]}」"
+                                fixed = True
+                            else:
+                                tag, reason = "❓", f"词典词0/{len(zh_kws_check)}命中，无候选"
+
+                # P2：重复中文句
+                if not fixed and zh_s.strip():
+                    if zh_s in zh_seen:
+                        new_zh = best_zh_from_flat(en_s, exclude_set=set(zh_seen.keys()))
+                        if new_zh and new_zh != zh_s:
+                            old_zh = zh_s
+                            pairs[idx][1] = new_zh
+                            zh_s = new_zh
+                            tag = "🔧"
+                            reason = f"P2去重:「{old_zh[:12]}」→「{new_zh[:12]}」"
+                            fixed = True
+                        else:
+                            tag, reason = "🔁", f"重复（首见[{zh_seen[zh_s]+1:02d}]），无候选"
+                    else:
+                        zh_seen[zh_s] = idx
+
+                if fixed:
+                    fixed_count += 1
+                    if zh_s not in zh_seen:
+                        zh_seen[zh_s] = idx
+
+                en_preview = en_s[:55].replace('\n', ' ')
+                zh_preview = zh_s[:30].replace('\n', ' ') if zh_s else "（空）"
+                print(f"[{idx+1:02d}] {tag}  EN: {en_preview}")
+                print(f"        ZH: {zh_preview}")
+                if reason:
+                    print(f"        ⚑  {reason}")
+
+            print("="*60)
+            print(f"[审核] 共修正 {fixed_count} 处")
+            print("="*60 + "\n")
+
+    # ================================================================== #
+    # 最终 fallback：只显示英文
+    # ================================================================== #
+    if not pairs:
+        content_paras = [p.strip() for p in content.split('\n') if p.strip()]
+        pairs = [[p, ""] for p in content_paras]
+        print(f"[translate_article] ⚠️ 无中文翻译，仅显示英文，段落数: {len(pairs)}")
+
+    # ================================================================== #
+    # 构建 HTML 邮件
+    # ================================================================== #
+    pair_html_lines = []
+    for en, zh in pairs:
+        en = str(en).strip() if en else ""
+        zh = str(zh).strip() if zh else ""
+        if not en and not zh:
+            continue
+        if en and zh:
+            pair_html_lines.append(
+                f'<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">{en}</p>'
+                f'<p style="margin:0 0 14px 0;">{zh}</p>'
+            )
+        elif en:
+            pair_html_lines.append(
+                f'<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">{en}</p>'
+            )
+        elif zh:
+            pair_html_lines.append(f'<p style="margin:0 0 14px 0;">{zh}</p>')
+
+    pair_html = "\n".join(pair_html_lines)
+
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        date_display = dt.strftime("%Y年%-m月%-d日")
+    except Exception:
+        date_display = date_str
+
+    final_link = sahaja_link or link
+
+    email_html = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px 16px;color:#222;line-height:1.7;">
+
+<h2 style="margin:0 0 4px 0;font-size:1.25em;font-weight:700;">{title_cn}</h2>
+<p style="color:#888;font-size:0.85em;margin:0 0 4px 0;font-style:italic;">{title_en}</p>
+<p style="color:#aaa;font-size:0.8em;margin:0 0 24px 0;">{date_display}</p>
+
+<hr style="border:none;border-top:1px solid #eee;margin:0 0 24px 0;">
+
+{pair_html}
+
+<hr style="border:none;border-top:1px solid #eee;margin:24px 0 16px 0;">
+<p style="color:#aaa;font-size:0.8em;margin:0;word-break:break-all;">
+  <a href="https://amruta.today/" style="color:#aaa;">https://amruta.today/</a>
+  <br>
+  <a href="{final_link}" style="color:#aaa;">{final_link}</a>
+</p>
+
+</body>
+</html>"""
+
+    with open("/workspace/pairs.json", "w", encoding="utf-8") as f:
+        json.dump(pairs, f, ensure_ascii=False, indent=2)
+
+    with open("/workspace/email_body.html", "w", encoding="utf-8") as f:
+        f.write(email_html)
+
+    with open("/workspace/sahaja_link.txt", "w", encoding="utf-8") as f:
+        f.write(final_link or "")
+
+    print(f"[translate_article] ✅ HTML 邮件构建完成，配对数: {len(pairs)}")
+
+    return {
+        "email_html": email_html,
+        "pairs_json": pairs,
+        "date_str": date_str,
+        "title_en": title_en,
+        "title_cn": title_cn,
+        "sahaja_link": final_link or "",
+    }
+
+
+def run():
+    import smtplib
+    import json
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.header import Header
+    from email.utils import formataddr
+
+    with open("/workspace/config.json", "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    smtp_cfg = cfg["smtp"]
+    email_cfg = cfg["email"]
+
+    with open("/workspace/email_body.html", "r", encoding="utf-8") as f:
+        html_body = f.read()
+
+    with open("/workspace/article_raw.json", "r", encoding="utf-8") as f:
+        article = json.load(f)
+    date = article["date"]
+
+    subject = email_cfg["subject_prefix"] + date
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = Header(subject, "utf-8")
+    # QQ SMTP 要求 From 地址与登录账号一致，使用 formataddr 正确编码显示名
+    msg["From"] = formataddr((email_cfg["from_name"], smtp_cfg["user"]))
+    msg["To"] = email_cfg["to"]
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    with smtplib.SMTP(smtp_cfg["host"], smtp_cfg["port"]) as server:
+        server.ehlo()
+        server.starttls()
+        server.login(smtp_cfg["user"], smtp_cfg["pass"])
+        server.sendmail(smtp_cfg["user"], [email_cfg["to"]], msg.as_string())
+
+    print(f"✅ 邮件已发送: {subject} → {email_cfg['to']}")
+    return {"email_sent": True, "subject": subject}
+
+
+def run():
+    import json
+    import subprocess
+    import sys
+    import os
+
+    # 读取所需数据
+    with open("/workspace/article_raw.json", "r", encoding="utf-8") as f:
+        article = json.load(f)
+    with open("/workspace/pairs.json", "r", encoding="utf-8") as f:
+        pairs = json.load(f)
+
+    raw_date = article["date"]  # 原始讲话日期，年份可能是历史年份
+    title_en = article["title"]
+
+    # 文件名统一规则：当年年份 + 文章月日（北京时间）
+    import datetime
+    cn_now = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    cur_year = str(cn_now.year)
+    mm_dd = raw_date[4:]  # "-MM-DD"
+    date = cur_year + mm_dd  # e.g. "2026-06-09"
+
+    # 优先用 sahaja.live 链接（有中文翻译的 live 网站）
+    sahaja_link_file = "/workspace/sahaja_link.txt"
+    if os.path.exists(sahaja_link_file):
+        with open(sahaja_link_file, "r", encoding="utf-8") as f:
+            source_url = f.read().strip()
+    if not source_url:
+        source_url = article.get("link", "")
+
+    # 从 email_body.html 提取中文标题（h2 直接是中文，无需括号匹配）
+    with open("/workspace/email_body.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    import re
+    # 先尝试纯中文 h2（锁定翻译路径）
+    m = re.search(r'<h2[^>]*>([^<]+)</h2>', html)
+    if m:
+        title_cn = m.group(1).strip()
+    else:
+        # 备用：英文（中文）格式
+        m2 = re.search(r"<h2>[^（]+（([^）]+)）", html)
+        title_cn = m2.group(1) if m2 else ""
+
+    payload = {
+        "date": date,
+        "title": title_en,
+        "titleCn": title_cn,
+        "sourceUrl": source_url,
+        "pairs": pairs
+    }
+
+    tmp_file = "/workspace/push_temp.json"
+    with open(tmp_file, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    # 确保 node 可用，安装 node 依赖（无 package.json 则跳过）
+    result = subprocess.run(
+        ["node", "/workspace/push_article.js", "--file", tmp_file],
+        capture_output=True, text=True, timeout=60
+    )
+
+    print(result.stdout)
+    if result.stderr:
+        print("STDERR:", result.stderr)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"push_article.js 失败 (code {result.returncode}): {result.stderr}")
+
+    os.remove(tmp_file)
+
+    archive_url = f"https://wherejiahe-bot.github.io/amruta-daily-archive/daily/{date}.html"
+    summary = f"✅ GitHub 推送成功\n日期: {date}\n网页: {archive_url}"
+    print(summary)
+
+    with open("/workspace/push_result.txt", "w", encoding="utf-8") as f:
+        f.write(summary)
+
+    return {"github_url": archive_url}
