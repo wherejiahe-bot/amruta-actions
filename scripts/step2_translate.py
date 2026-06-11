@@ -7,7 +7,7 @@ Changes from original:
   - return -> file writes
 Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp/sahaja_link.txt
 """
-import json, re, subprocess as sp, os
+import json, re, subprocess as sp, os, urllib.request
 from datetime import datetime
 
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
@@ -620,6 +620,106 @@ if pairs:
         print("="*60)
         print(f"[审核] 共修正 {fixed_count} 处")
         print("="*60 + "\n")
+
+# ================================================================== #
+# IMA 知识库备用（登录失败时使用）
+# ================================================================== #
+if not pairs:
+    IMA_CLIENT_ID = os.environ.get("IMA_CLIENT_ID", "")
+    IMA_API_KEY = os.environ.get("IMA_API_KEY", "")
+    IMA_KB_ID = os.environ.get("IMA_KB_ID", "0019ef95d3004702")
+
+    if IMA_CLIENT_ID and IMA_API_KEY:
+        print(f"[translate_article] 尝试从 IMA 知识库搜索 {date_str} 的中文翻译...")
+        ima_headers = {
+            "X-Client-Id": IMA_CLIENT_ID,
+            "X-Api-Key": IMA_API_KEY,
+            "Content-Type": "application/json"
+        }
+
+        # 搜索 sajaha live talks 文件夹
+        ima_search_url = "https://ima.qq.com/openapi/wiki/v1/search_knowledge"
+        search_body = json.dumps({
+            "query": date_str,
+            "cursor": "",
+            "knowledge_base_id": IMA_KB_ID
+        }).encode()
+
+        try:
+            req = urllib.request.Request(ima_search_url, data=search_body, headers=ima_headers, method="POST")
+            resp = urllib.request.urlopen(req, timeout=15)
+            search_result = json.loads(resp.read().decode("utf-8"))
+
+            if search_result.get("code") == 0:
+                info_list = search_result.get("data", {}).get("info_list", [])
+                print(f"[translate_article] IMA 搜索到 {len(info_list)} 条结果")
+
+                # 找 "sahaja live talks" 文件夹中的中文翻译 MD 文件
+                target_media_id = None
+                target_title = ""
+                for item in info_list:
+                    title = item.get("title", "")
+                    # 优先找中英对照的 MD 文件（标题含中文的）
+                    if any('\u4e00' <= c <= '\u9fff' for c in title):
+                        target_media_id = item.get("media_id", "")
+                        target_title = title
+                        print(f"[translate_article] IMA 找到中文文件: {title}")
+                        break
+
+                if not target_media_id:
+                    # 没有中文标题，取第一个 MD 文件
+                    for item in info_list:
+                        mid = item.get("media_id", "")
+                        if mid.startswith("markdown_"):
+                            target_media_id = mid
+                            target_title = item.get("title", "")
+                            print(f"[translate_article] IMA 取第一个 MD 文件: {target_title}")
+                            break
+
+                if target_media_id:
+                    # 获取文件下载链接
+                    media_info_body = json.dumps({"media_id": target_media_id}).encode()
+                    req2 = urllib.request.Request(
+                        "https://ima.qq.com/openapi/wiki/v1/get_media_info",
+                        data=media_info_body, headers=ima_headers, method="POST")
+                    resp2 = urllib.request.urlopen(req2, timeout=15)
+                    media_info = json.loads(resp2.read().decode("utf-8"))
+
+                    if media_info.get("code") == 0:
+                        url_info = media_info.get("data", {}).get("url_info", {})
+                        file_url = url_info.get("url", "")
+                        file_headers = url_info.get("headers", {})
+
+                        if file_url:
+                            print(f"[translate_article] IMA 下载文件: {file_url[:60]}...")
+                            file_req = urllib.request.Request(file_url, headers=file_headers)
+                            file_resp = urllib.request.urlopen(file_req, timeout=30)
+                            md_content = file_resp.read().decode("utf-8", errors="replace")
+
+                            # 解析 YAML frontmatter 和正文
+                            if md_content.startswith("---"):
+                                parts = md_content.split("---", 2)
+                                if len(parts) >= 3:
+                                    md_body = parts[2].strip()
+                                else:
+                                    md_body = md_content
+                            else:
+                                md_body = md_content
+
+                            # 用原有的解析器处理正文
+                            candidate = parse_sahaja_full_text(md_body)
+                            if has_chinese(candidate):
+                                pairs = candidate
+                                sahaja_link = f"https://www.sahaja.live/?p={target_media_id.split('_')[-1][:10]}"
+                                extracted = extract_title_cn_from_pairs(pairs, title_en)
+                                if extracted:
+                                    title_cn = extracted
+                                print(f"[translate_article] ✅ IMA 命中，配对数: {len(pairs)}")
+                            else:
+                                print(f"[translate_article] IMA 文件无中文配对吧")
+
+        except Exception as e:
+            print(f"[translate_article] IMA 搜索失败: {e}")
 
 # ================================================================== #
 # 最终 fallback：只显示英文
