@@ -597,7 +597,7 @@ async function main() {
   console.log(`📝 Building ${dailyPath}...`);
   const existingDaily = await githubGet(dailyPath);
   const dailySha = existingDaily ? existingDaily.sha : null;
-  await githubPut(dailyPath, htmlFinal, `feat: add daily article ${date} - ${title}`, dailySha);
+  await githubPut(dailyPath, dailyHtml, `feat: add daily article ${date} - ${title}`, dailySha);
   console.log(`✅ ${dailyPath} pushed`);
 
   // Step 2: Get current articles.json
