@@ -320,12 +320,7 @@ async function tmtTranslate(text) {
 }
 
 async function translateDef(text) {
-  // Try Tencent TMT first, fallback to MyMemory
-  try {
-    const t = await tmtTranslate(text);
-    if (t && t !== text) return t;
-  } catch(e) {}
-  // Fallback: MyMemory
+  // Primary: MyMemory (fast, reliable)
   try {
     const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text) + '&langpair=en|zh';
     const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
@@ -334,7 +329,13 @@ async function translateDef(text) {
     const t = d?.responseData?.translatedText || '';
     if (!t || t === text) return '';
     return t;
-  } catch(e) { return ''; }
+  } catch(e) {}
+  // Fallback: Tencent TMT
+  try {
+    const t = await tmtTranslate(text);
+    if (t && t !== text) return t;
+  } catch(e) {}
+  return '';
 }
 
 function closePopup() {
