@@ -1,9 +1,12 @@
 """
 Step 2: Search sahaja.live for Chinese translation.
-Uses public WordPress REST API - no login required.
+Uses public WordPress REST API with urllib.request (NOT curl).
+Search strategy: date prefix first, then keyword fallback.
 Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html
 """
-import json, re, subprocess as sp, os, datetime as dt, urllib.request
+import json, re, os, datetime as dt, urllib.request, ssl, sys
+
+ctx = ssl.create_default_context()
 
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
     article = json.load(f)
@@ -64,7 +67,7 @@ def parse_sahaja_text(full_text):
     while i < len(lines):
         en = lines[i]
         cn_en = sum(1 for c in en if '\u4e00' <= c <= '\u9fff')
-        if cn_en > 0:  # skip stray Chinese lines
+        if cn_en > 0:
             i += 1
             continue
         if i + 1 < len(lines):
@@ -78,11 +81,26 @@ def parse_sahaja_text(full_text):
         i += 1
     return result
 
+def api_get(url):
+    """Fetch JSON from a URL using urllib.request with standard headers."""
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (compatible; AmrutaBot/1.0)'})
+    resp = urllib.request.urlopen(req, context=ctx, timeout=30)
+    raw = resp.read().decode('utf-8')
+    print(f"[api_get] {url[:80]} -> {len(raw)} bytes", flush=True)
+    if not raw.strip():
+        print("[api_get] EMPTY RESPONSE!", flush=True)
+        return None
+    return json.loads(raw)
+
 def fetch_post(post_id):
-    """Fetch a single post by ID, return (pairs, source_link, title_cn, text_raw)"""
-    fu = 'https://www.sahaja.live/wp-json/wp/v2/posts/' + str(post_id)
-    freq = urllib.request.Request(fu, headers={'User-Agent': 'Mozilla/5.0'})
-    pd = json.loads(urllib.request.urlopen(freq, timeout=30).read())
+    """Fetch a single post by ID, return (pairs, source_link, title_cn, text_raw)."""
+    try:
+        pd = api_get(f'https://www.sahaja.live/wp-json/wp/v2/posts/{post_id}')
+    except Exception as e:
+        print(f"[fetch_post] API error for post {post_id}: {e}", flush=True)
+        return [], "", "", ""
+    if not pd:
+        return [], "", "", ""
     html = pd.get('content', {}).get('rendered', '')
     text_raw = re.sub(r'<[^>]+>', '\n', html)
     for ent, rep in [('&amp;','&'),('&#038;','&'),('&#8211;','-'),('&#8217;',"'"),
@@ -92,10 +110,11 @@ def fetch_post(post_id):
     t_cn = re.sub(r'^\d{4}-\d{2}-\d{2}\s*', '', raw_title).strip()
     s_link = pd.get('link', '')
     candidate = parse_sahaja_text(text_raw)
+    print(f"[fetch_post] post_id={post_id}, pairs={len(candidate)}, title_cn={t_cn}", flush=True)
     return candidate, s_link, t_cn, text_raw
 
 # --- 2a: Try cache ---
-print("[2a] Checking cache...")
+print("[2a] Checking cache...", flush=True)
 if os.path.exists(SAHAJA_CACHE):
     try:
         with open(SAHAJA_CACHE) as f:
@@ -107,23 +126,52 @@ if os.path.exists(SAHAJA_CACHE):
                 sahaja_link = cached.get("source_url", link)
                 ext = extract_title_cn(pairs, title_en)
                 if ext: title_cn = ext
-                print(f"[2a] Cache hit: {len(pairs)} pairs")
+                print(f"[2a] Cache hit: {len(pairs)} pairs", flush=True)
     except Exception as e:
-        print(f"[2a] Cache error: {e}")
+        print(f"[2a] Cache error: {e}", flush=True)
 
-# --- 2b: Public WordPress API search ---
+# --- 2b: Date-based search (most reliable for sahaja.live) ---
 if not pairs:
-    print("[2b] Searching sahaja.live public API...")
+    mm_dd = date_str[5:]  # e.g. "06-11"
+    search_url = f"https://www.sahaja.live/wp-json/wp/v2/posts?search={mm_dd}&per_page=20"
+    print(f"[2b] Date search: {search_url}", flush=True)
+    try:
+        posts = api_get(search_url)
+        if posts and isinstance(posts, list):
+            print(f"[2b] Date search found {len(posts)} posts", flush=True)
+            for p in posts:
+                pid = p['id']
+                candidate, s_link, t_cn, text_raw = fetch_post(pid)
+                if has_chinese(candidate):
+                    pairs = candidate
+                    sahaja_link = s_link
+                    ext = extract_title_cn(pairs, title_en)
+                    if ext: title_cn = ext
+                    print(f"[2b] HIT post_id={pid}, pairs={len(pairs)}, title_cn={title_cn}", flush=True)
+                    try:
+                        with open(SAHAJA_CACHE, "w") as f:
+                            json.dump({"date": date_str, "full_text": text_raw, "source_url": sahaja_link}, f)
+                    except:
+                        pass
+                    break
+                else:
+                    print(f"[2b] post_id={pid}: no Chinese, skip", flush=True)
+        else:
+            print(f"[2b] No posts found from date search", flush=True)
+    except Exception as e:
+        print(f"[2b] Date search error: {e}", flush=True)
+
+# --- 2c: Keyword fallback (if date search failed) ---
+if not pairs:
+    print("[2c] Fallback: keyword search...", flush=True)
     search_words = " ".join([w for w in title_en.split() if len(w) > 2][:5])
     if search_words:
-        search_url = "https://www.sahaja.live/wp-json/wp/v2/posts?search=" + search_words.replace(' ', '%20') + "&per_page=5"
-        print(f"[2b] {search_url}")
-        r = sp.run(['curl', '-s', '-H', 'User-Agent: Mozilla/5.0', search_url],
-                   capture_output=True, text=True, timeout=30)
+        search_url = f"https://www.sahaja.live/wp-json/wp/v2/posts?search={search_words.replace(' ', '%20')}&per_page=5"
+        print(f"[2c] {search_url}", flush=True)
         try:
-            posts = json.loads(r.stdout)
-            if isinstance(posts, list):
-                print(f"[2b] Found {len(posts)} posts")
+            posts = api_get(search_url)
+            if posts and isinstance(posts, list):
+                print(f"[2c] Found {len(posts)} posts", flush=True)
                 for p in posts:
                     pid = p['id']
                     candidate, s_link, t_cn, text_raw = fetch_post(pid)
@@ -132,25 +180,43 @@ if not pairs:
                         sahaja_link = s_link
                         ext = extract_title_cn(pairs, title_en)
                         if ext: title_cn = ext
-                        print(f"[2b] Hit post_id={pid}, pairs={len(pairs)}, title_cn={title_cn}")
-                        try:
-                            with open(SAHAJA_CACHE, "w") as f:
-                                json.dump({"date": date_str, "full_text": text_raw, "source_url": sahaja_link}, f)
-                        except: pass
+                        print(f"[2c] HIT post_id={pid}, pairs={len(pairs)}", flush=True)
                         break
                     else:
-                        print(f"[2b] post_id={pid}: no Chinese, skip")
+                        print(f"[2c] post_id={pid}: no Chinese, skip", flush=True)
         except Exception as e:
-            print(f"[2b] Search error: {e}")
+            print(f"[2c] Search error: {e}", flush=True)
+
+    # Individual keyword fallback
+    if not pairs:
+        print("[2c] Fallback: individual keywords...", flush=True)
+        for w in [w for w in title_en.split() if len(w) > 2][:3]:
+            kw_url = f"https://www.sahaja.live/wp-json/wp/v2/posts?search={w}&per_page=5"
+            try:
+                posts = api_get(kw_url)
+                if posts and isinstance(posts, list):
+                    for p in posts:
+                        pid = p['id']
+                        candidate, s_link, t_cn, text_raw = fetch_post(pid)
+                        if has_chinese(candidate):
+                            pairs = candidate
+                            sahaja_link = s_link
+                            ext = extract_title_cn(pairs, title_en)
+                            if ext: title_cn = ext
+                            print(f"[2c] Keyword HIT post_id={pid}", flush=True)
+                            break
+                    if pairs: break
+            except:
+                pass
 
 # --- Fallback: English only ---
 if not pairs:
-    print("[2b] No Chinese found - English only")
+    print("[2b] No Chinese found - English only", flush=True)
     paras = [p.strip() for p in content.split('\n') if p.strip()]
     pairs = [[p, ""] for p in paras]
 
 # --- Build email HTML ---
-print(f"[2c] Building email... ({len(pairs)} pairs, {sum(1 for _,zh in pairs if zh)} with Chinese)")
+print(f"[2d] Building email... ({len(pairs)} pairs, {sum(1 for _,zh in pairs if zh)} with Chinese)", flush=True)
 pair_html = ""
 for en, zh in pairs:
     en_s = str(en).strip() if en else ""
@@ -191,4 +257,4 @@ with open("/tmp/email_body.html", "w", encoding="utf-8") as f:
 with open("/tmp/sahaja_link.txt", "w", encoding="utf-8") as f:
     f.write(final_link or "")
 
-print("OK Step2: " + str(len(pairs)) + " pairs, " + str(sum(1 for _,zh in pairs if zh)) + " with Chinese")
+print("OK Step2: " + str(len(pairs)) + " pairs, " + str(sum(1 for _,zh in pairs if zh)) + " with Chinese", flush=True)
