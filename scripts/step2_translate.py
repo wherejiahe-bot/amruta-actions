@@ -397,229 +397,194 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
     zh_idx = round(ratio * (len(zh_sents) - 1))
     return zh_sents[min(zh_idx, len(zh_sents) - 1)]
 
-if pairs:
+def do_alignment_and_audit():
+    """句级对齐+审核修正。直接操作全局 pairs, title_cn, content, title_en。"""
+    global pairs, title_cn
     amruta_sents = split_sentences(content)
-    if amruta_sents:
-        # ---------------------------------------------------------------- #
-        # 核心对齐策略：
-        # sahaja.live 的英文段和中文段是严格顺序对应的。
-        # 1. 在 sahaja pairs 中找包含 amruta 英文内容的那些段落（锚定段）
-        # 2. 把锚定段的中文按句拆开，展成一个有序中文句列表
-        # 3. amruta 英文句按顺序从该列表逐句取中文——不猜测，不跳跃
-        # ---------------------------------------------------------------- #
+    if not amruta_sents:
+        return
 
-        stopwords = {'that','this','with','have','your','from','they','them',
-                     'will','what','when','into','been','were','also','just',
-                     'more','than','then','there','their','which','still','only',
-                     'such','very','even','does','dont','cant','wont','should'}
+    stopwords = {'that','this','with','have','your','from','they','them',
+                 'will','what','when','into','been','were','also','just',
+                 'more','than','then','there','their','which','still','only',
+                 'such','very','even','does','dont','cant','wont','should'}
 
-        # 步骤1：用 amruta 第一句和最后一句在 sahaja pairs 中定位起止段落
-        def best_para_for_sent(en_s, sahaja_pairs_list):
-            kws = set(re.findall(r'\b[a-z]{4,}\b', en_s.lower())) - stopwords
-            best_sc, best_pi = 0, 0
-            for pi, (ep, zp) in enumerate(sahaja_pairs_list):
-                if not zp.strip(): continue
-                ep_words = set(re.findall(r'\b[a-z]{4,}\b', ep.lower())) - stopwords
-                if not ep_words: continue
-                sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
-                if sc > best_sc:
-                    best_sc, best_pi = sc, pi
-            return best_pi
+    def best_para_for_sent(en_s, sahaja_pairs_list):
+        kws = set(re.findall(r'\b[a-z]{4,}\b', en_s.lower())) - stopwords
+        best_sc, best_pi = 0, 0
+        for pi, (ep, zp) in enumerate(sahaja_pairs_list):
+            if not zp.strip(): continue
+            ep_words = set(re.findall(r'\b[a-z]{4,}\b', ep.lower())) - stopwords
+            if not ep_words: continue
+            sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
+            if sc > best_sc:
+                best_sc, best_pi = sc, pi
+        return best_pi
 
-        first_pi = best_para_for_sent(amruta_sents[0], pairs)
-        last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
-        if last_pi < first_pi:
-            last_pi = first_pi
+    first_pi = best_para_for_sent(amruta_sents[0], pairs)
+    last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
+    if last_pi < first_pi:
+        last_pi = first_pi
 
-        # 步骤2：逐段对齐
-        # 对每个锚定段：
-        #   a) 把该段英文按句拆分，计算 amruta 中有几句来自本段（关键词匹配）
-        #   b) 对应取本段中文的前 N 句分给这些英文句（N = 本段英文句数）
-        # 目的：sahaja 中文段里「传播霎哈嘉瑜伽并建立其体系是你们的责任」
-        # 这类附属句与英文 [08] 同属一句，不单独对应一句 amruta 英文。
+    amruta_to_para = []
+    for en_sent in amruta_sents:
+        pi = best_para_for_sent(en_sent, pairs[first_pi:last_pi+1])
+        amruta_to_para.append(first_pi + pi)
 
-        # 先把 amruta 每句分配到最匹配的 sahaja 段落
-        amruta_to_para = []
-        for en_sent in amruta_sents:
-            pi = best_para_for_sent(en_sent, pairs[first_pi:last_pi+1])
-            amruta_to_para.append(first_pi + pi)
+    from collections import defaultdict
+    para_to_amruta = defaultdict(list)
+    for order, pi in enumerate(amruta_to_para):
+        para_to_amruta[pi].append(order)
 
-        from collections import defaultdict
-        para_to_amruta = defaultdict(list)
-        for order, pi in enumerate(amruta_to_para):
-            para_to_amruta[pi].append(order)
-
-        # 对每个段落：词典精准锚定 + 附属句合并
-        # 策略：
-        #   1. 第一轮：每句 amruta 按词典词找最匹配的 zh 子句（主句锚点）
-        #   2. 第二轮：每个主句锚点，向后收集紧邻的「孤儿」zh 子句（未被任何 order 锚定的），
-        #              合并为一条完整中文（主句 + 附属句，用「。」连接）
-        #   这样 [08] 的「传播霎哈嘉瑜伽并建立其体系是你们的责任」就会被合并进来
-        result_map = {}
-        for pi in range(first_pi, last_pi + 1):
-            if pi not in para_to_amruta:
-                continue
-            orders = para_to_amruta[pi]
-            zp = pairs[pi][1]
-            zh_subs = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) > 3]
-            if not zh_subs:
-                for order in orders:
-                    result_map[order] = ""
-                continue
-
-            # 第一轮：词典精准锚定每句 amruta → 一个主 zh_idx
-            zh_claimed = {}   # zh_idx -> order（被哪句 amruta 认领）
-            anchored   = {}   # order  -> zh_idx
+    result_map = {}
+    for pi in range(first_pi, last_pi + 1):
+        if pi not in para_to_amruta:
+            continue
+        orders = para_to_amruta[pi]
+        zp = pairs[pi][1]
+        zh_subs = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) > 3]
+        if not zh_subs:
             for order in orders:
-                en_s = amruta_sents[order]
-                zh_kws = en_sent_to_zh_keywords(en_s)
-                if not zh_kws:
-                    continue
-                best_sc, best_zi = 0, -1
-                for zi, zs in enumerate(zh_subs):
-                    if zi in zh_claimed:
-                        continue
-                    sc = sum(1 for kw in zh_kws if kw in zs)
-                    if sc > best_sc:
-                        best_sc, best_zi = sc, zi
-                if best_sc >= 1 and best_zi >= 0:
-                    anchored[order]       = best_zi
-                    zh_claimed[best_zi]   = order
+                result_map[order] = ""
+            continue
 
-            # 未锚定的 order 按顺序取剩余 zh 子句
-            remaining = [zi for zi in range(len(zh_subs)) if zi not in zh_claimed]
-            ri = 0
-            for order in orders:
-                if order not in anchored:
-                    if ri < len(remaining):
-                        anchored[order]             = remaining[ri]
-                        zh_claimed[remaining[ri]]   = order
-                        ri += 1
-                    else:
-                        anchored[order] = len(zh_subs) - 1
-
-            # 第二轮：收集每个主锚点之后未被认领的连续「孤儿」子句，合并进主句
-            # 按锚点 zh_idx 排序，确定每个 order 的「领地」范围
-            order_by_zi = sorted(anchored.items(), key=lambda x: x[1])  # [(order, zi), ...]
-            for rank, (order, zi) in enumerate(order_by_zi):
-                # 找下一个 order 的 zh_idx（作为本 order 领地的上边界，不含）
-                next_zi = order_by_zi[rank + 1][1] if rank + 1 < len(order_by_zi) else len(zh_subs)
-                # 收集 zi+1 到 next_zi-1 之间未被其他 order 认领的孤儿句
-                group = [zh_subs[zi]]
-                for k in range(zi + 1, next_zi):
-                    if k not in zh_claimed or zh_claimed[k] == order:
-                        group.append(zh_subs[k])
-                result_map[order] = "。".join(group)
-
-        # 步骤3：按原始顺序组装
-        aligned = []
-        for order, en_sent in enumerate(amruta_sents):
-            aligned.append([en_sent, result_map.get(order, "")])
-
-        print(f"[translate_article] 锚定段落 [{first_pi}~{last_pi}]，para分组: {dict(para_to_amruta)}")
-
-        pairs = aligned
-        cn_count = sum(1 for _, zh in pairs if zh.strip())
-        print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
-
-        # ---------------------------------------------------------------- #
-        # 审核：逐句验证英文与中文的对应度，自动修正
-        # 规则（按优先级）：
-        #   P0 中文为空/过短(<4字) → 在锚定段中文库里找最佳句
-        #   P1 有词典词但中文完全不含任何一个译词 → 在锚定段中文库里找最佳句替换
-        #   P2 重复中文句（同一中文句出现≥2次）→ 在锚定段中文库里找不重复的最佳候选
-        # ---------------------------------------------------------------- #
-
-        # 建立锚定段落的全量中文子句库（供审核修正用）
-        zh_pool = []
-        for pi in range(first_pi, last_pi + 1):
-            if pi >= len(pairs): break
-            zp = pairs[pi][1]
-            for zs in re.split(r'[。！？]', zp):
-                zs = zs.strip()
-                if len(zs) > 3:
-                    zh_pool.append(zs)
-
-        def best_zh_from_flat(en_s, exclude_set=None):
-            """在锚定段中文库中找词典词命中最多的句子"""
+        zh_claimed = {}
+        anchored   = {}
+        for order in orders:
+            en_s = amruta_sents[order]
             zh_kws = en_sent_to_zh_keywords(en_s)
             if not zh_kws:
-                return ""
-            best_sc, best_zs = 0, ""
-            for zs in zh_pool:
-                if exclude_set and zs in exclude_set:
+                continue
+            best_sc, best_zi = 0, -1
+            for zi, zs in enumerate(zh_subs):
+                if zi in zh_claimed:
                     continue
                 sc = sum(1 for kw in zh_kws if kw in zs)
                 if sc > best_sc:
-                    best_sc, best_zs = sc, zs
-            return best_zs if best_sc >= 1 else ""
+                    best_sc, best_zi = sc, zi
+            if best_sc >= 1 and best_zi >= 0:
+                anchored[order]       = best_zi
+                zh_claimed[best_zi]   = order
 
-        print("\n" + "="*60)
-        print("[审核+修正] 逐句质量检查")
-        print("="*60)
-        zh_seen = {}
-        fixed_count = 0
+        remaining = [zi for zi in range(len(zh_subs)) if zi not in zh_claimed]
+        ri = 0
+        for order in orders:
+            if order not in anchored:
+                if ri < len(remaining):
+                    anchored[order]             = remaining[ri]
+                    zh_claimed[remaining[ri]]   = order
+                    ri += 1
+                else:
+                    anchored[order] = len(zh_subs) - 1
 
-        for idx in range(len(pairs)):
-            en_s, zh_s = pairs[idx]
-            tag, reason, fixed = "✅", "", False
+        order_by_zi = sorted(anchored.items(), key=lambda x: x[1])
+        for rank, (order, zi) in enumerate(order_by_zi):
+            next_zi = order_by_zi[rank + 1][1] if rank + 1 < len(order_by_zi) else len(zh_subs)
+            group = [zh_subs[zi]]
+            for k in range(zi + 1, next_zi):
+                if k not in zh_claimed or zh_claimed[k] == order:
+                    group.append(zh_subs[k])
+            result_map[order] = "。".join(group)
 
-            # P0：中文为空或过短
-            if not zh_s.strip() or len(zh_s.strip()) < 4:
-                new_zh = best_zh_from_flat(en_s)
-                if new_zh:
-                    pairs[idx][1] = new_zh
-                    zh_s = new_zh
-                    tag, reason, fixed = "🔧", f"P0修正→「{new_zh[:20]}」", True
+    aligned = []
+    for order, en_sent in enumerate(amruta_sents):
+        aligned.append([en_sent, result_map.get(order, "")])
 
-            # P1：词典词完全未命中
-            if not fixed and zh_s.strip():
-                zh_kws_check = en_sent_to_zh_keywords(en_s)
-                if zh_kws_check:
-                    hit = sum(1 for kw in zh_kws_check if kw in zh_s)
-                    if hit == 0:
-                        new_zh = best_zh_from_flat(en_s, exclude_set={zh_s})
-                        if new_zh and new_zh != zh_s:
-                            old_zh = zh_s
-                            pairs[idx][1] = new_zh
-                            zh_s = new_zh
-                            tag = "🔧"
-                            reason = f"P1修正:「{old_zh[:12]}」→「{new_zh[:12]}」"
-                            fixed = True
-                        else:
-                            tag, reason = "❓", f"词典词0/{len(zh_kws_check)}命中，无候选"
+    print(f"[translate_article] 锚定段落 [{first_pi}~{last_pi}]，para分组: {dict(para_to_amruta)}")
 
-            # P2：重复中文句
-            if not fixed and zh_s.strip():
-                if zh_s in zh_seen:
-                    new_zh = best_zh_from_flat(en_s, exclude_set=set(zh_seen.keys()))
+    pairs = aligned
+    cn_count = sum(1 for _, zh in pairs if zh.strip())
+    print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
+
+    # 审核修正
+    zh_pool = []
+    for pi in range(first_pi, last_pi + 1):
+        if pi >= len(pairs): break
+        zp = pairs[pi][1]
+        for zs in re.split(r'[。！？]', zp):
+            zs = zs.strip()
+            if len(zs) > 3:
+                zh_pool.append(zs)
+
+    def best_zh_from_flat(en_s, exclude_set=None):
+        zh_kws = en_sent_to_zh_keywords(en_s)
+        if not zh_kws:
+            return ""
+        best_sc, best_zs = 0, ""
+        for zs in zh_pool:
+            if exclude_set and zs in exclude_set:
+                continue
+            sc = sum(1 for kw in zh_kws if kw in zs)
+            if sc > best_sc:
+                best_sc, best_zs = sc, zs
+        return best_zs if best_sc >= 1 else ""
+
+    print("\n" + "="*60)
+    print("[审核+修正] 逐句质量检查")
+    print("="*60)
+    zh_seen = {}
+    fixed_count = 0
+
+    for idx in range(len(pairs)):
+        en_s, zh_s = pairs[idx]
+        tag, reason, fixed = "✅", "", False
+
+        if not zh_s.strip() or len(zh_s.strip()) < 4:
+            new_zh = best_zh_from_flat(en_s)
+            if new_zh:
+                pairs[idx][1] = new_zh
+                zh_s = new_zh
+                tag, reason, fixed = "🔧", f"P0修正→「{new_zh[:20]}」", True
+
+        if not fixed and zh_s.strip():
+            zh_kws_check = en_sent_to_zh_keywords(en_s)
+            if zh_kws_check:
+                hit = sum(1 for kw in zh_kws_check if kw in zh_s)
+                if hit == 0:
+                    new_zh = best_zh_from_flat(en_s, exclude_set={zh_s})
                     if new_zh and new_zh != zh_s:
                         old_zh = zh_s
                         pairs[idx][1] = new_zh
                         zh_s = new_zh
                         tag = "🔧"
-                        reason = f"P2去重:「{old_zh[:12]}」→「{new_zh[:12]}」"
+                        reason = f"P1修正:「{old_zh[:12]}」→「{new_zh[:12]}」"
                         fixed = True
                     else:
-                        tag, reason = "🔁", f"重复（首见[{zh_seen[zh_s]+1:02d}]），无候选"
+                        tag, reason = "❓", f"词典词0/{len(zh_kws_check)}命中，无候选"
+
+        if not fixed and zh_s.strip():
+            if zh_s in zh_seen:
+                new_zh = best_zh_from_flat(en_s, exclude_set=set(zh_seen.keys()))
+                if new_zh and new_zh != zh_s:
+                    old_zh = zh_s
+                    pairs[idx][1] = new_zh
+                    zh_s = new_zh
+                    tag = "🔧"
+                    reason = f"P2去重:「{old_zh[:12]}」→「{new_zh[:12]}」"
+                    fixed = True
                 else:
-                    zh_seen[zh_s] = idx
+                    tag, reason = "🔁", f"重复（首见[{zh_seen[zh_s]+1:02d}]），无候选"
+            else:
+                zh_seen[zh_s] = idx
 
-            if fixed:
-                fixed_count += 1
-                if zh_s not in zh_seen:
-                    zh_seen[zh_s] = idx
+        if fixed:
+            fixed_count += 1
+            if zh_s not in zh_seen:
+                zh_seen[zh_s] = idx
 
-            en_preview = en_s[:55].replace('\n', ' ')
-            zh_preview = zh_s[:30].replace('\n', ' ') if zh_s else "（空）"
-            print(f"[{idx+1:02d}] {tag}  EN: {en_preview}")
-            print(f"        ZH: {zh_preview}")
-            if reason:
-                print(f"        ⚑  {reason}")
+        en_preview = en_s[:55].replace('\n', ' ')
+        zh_preview = zh_s[:30].replace('\n', ' ') if zh_s else "（空）"
+        print(f"[{idx+1:02d}] {tag}  EN: {en_preview}")
+        print(f"        ZH: {zh_preview}")
+        if reason:
+            print(f"        ⚑  {reason}")
 
-        print("="*60)
-        print(f"[审核] 共修正 {fixed_count} 处")
-        print("="*60 + "\n")
+    print("="*60)
+    print(f"[审核] 共修正 {fixed_count} 处")
+    print("="*60 + "\n")
+
+if pairs:
+    do_alignment_and_audit()
 
 # ================================================================== #
 # IMA 知识库备用（登录失败时使用）
@@ -734,7 +699,9 @@ if not pairs:
                                 extracted = extract_title_cn_from_pairs(pairs, title_en)
                                 if extracted:
                                     title_cn = extracted
-                                print(f"[translate_article] ✅ IMA 命中，配对数: {len(pairs)}")
+                                print(f"[translate_article] ✅ IMA 命中，段落级配对: {len(pairs)}")
+                                # 句级对齐 + 审核修正
+                                do_alignment_and_audit()
                             else:
                                 print(f"[translate_article] IMA 文件无中文配对吧")
 
