@@ -29,8 +29,8 @@ jobs:
       - name: Step3 - Push to GitHub
         env:
           GITHUB_TOKEN: ${{ secrets.AMRUTA_GITHUB_TOKEN }}
-          TMT_SECRET_ID: ${{ secrets.TMT_SECRET_ID }}
-          TMT_SECRET_KEY: ${{ secrets.TMT_SECRET_KEY }}
+          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
         run: python3 scripts/step3_push.py
 
       - name: Step4 - Send email
