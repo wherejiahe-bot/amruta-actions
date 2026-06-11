@@ -19,8 +19,6 @@ jobs:
 
       - name: Step2 - Search + Translate
         env:
-          SAHAJA_EMAIL: ${{ secrets.SAHAJA_EMAIL }}
-          SAHAJA_PASSWORD: ${{ secrets.SAHAJA_PASSWORD }}
           IMA_CLIENT_ID: ${{ secrets.IMA_CLIENT_ID }}
           IMA_API_KEY: ${{ secrets.IMA_API_KEY }}
           IMA_KB_ID: ${{ secrets.IMA_KB_ID }}
