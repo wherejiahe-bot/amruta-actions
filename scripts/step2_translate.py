@@ -723,6 +723,7 @@ if not pairs:
                                 md_body = md_content
 
                             # 用原有的解析器处理正文
+                            print(f"[translate_article] MD 正文前200字: {md_body[:200].replace(chr(10),' ')}")
                             candidate = parse_sahaja_full_text(md_body)
                             if has_chinese(candidate):
                                 pairs = candidate
