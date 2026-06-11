@@ -13,9 +13,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: {node-version: '20'}
-      - name: Fetch + Push + Email
+
+      - name: Step1 - Fetch article
+        run: python3 scripts/step1_fetch.py
+
+      - name: Step2 - Search + Translate
+        env:
+          SAHAJA_EMAIL: ${{ secrets.SAHAJA_EMAIL }}
+          SAHAJA_PASSWORD: ${{ secrets.SAHAJA_PASSWORD }}
+        run: python3 scripts/step2_translate.py
+
+      - name: Step3 - Push to GitHub
         env:
           GITHUB_TOKEN: ${{ secrets.AMRUTA_GITHUB_TOKEN }}
+        run: python3 scripts/step3_push.py
+
+      - name: Step4 - Send email
+        env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
-        run: python3 scripts/run_workflow.py
+        run: python3 scripts/step4_email.py
