@@ -80,7 +80,7 @@ function githubPut(path, content, message, sha) {
 }
 
 function buildDailyHtml(article) {
-  const { date, title, titleCn, pairs, sourceUrl } = article;
+  const { date, title, titleCn, pairs, sourceUrl, wordMap } = article;
   const year = date.split('-')[0];
   const monthNum = date.split('-')[1];
   const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -261,7 +261,14 @@ function synthSpeak() {
   window.speechSynthesis.speak(utter);
 }
 
+// 阿里云预翻译单词表（构建时生成）
+const WORD_MAP = ${JSON.stringify(wordMap || {})};
+
 async function translateDef(text) {
+  // 先查本地预翻译表（阿里云构建时翻译）
+  const w = text.toLowerCase().replace(/[^a-z]/g, '');
+  if (WORD_MAP[w]) { return WORD_MAP[w]; }
+  // 查不到则用 MyMemory
   try {
     const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text) + '&langpair=en|zh';
     const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
