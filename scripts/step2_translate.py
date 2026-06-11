@@ -143,6 +143,24 @@ EN_ZH_DICT = {
     'involved': '陷入', 'seeking': '寻求',
     'free': '自由', 'using': '利用',
     'grow': '成长', 'growing': '成长', 'growth': '成长',
+    'rationality': '理性', 'rational': '理性',
+    'reason': '理由', 'wisdom': '智慧',
+    'emotional': '情感', 'emotion': '情感', 'emotionality': '情感',
+    'balance': '平衡', 'centre': '中心', 'central': '中心',
+    'heart': '心', 'mind': '脑',
+    'understand': '理解', 'understanding': '理解',
+    'knowledge': '知识', 'experience': '体验', 'experiencing': '体验',
+    'reality': '实相', 'truth': '真理',
+    'progress': '进步', 'limitation': '局限', 'limited': '有限',
+    'beyond': '超越', 'transcend': '超越',
+    'consciousness': '意识', 'awareness': '觉知',
+    'joy': '喜乐', 'bliss': '极乐',
+    'sahaja': '霎哈嘉', 'yoga': '瑜伽',
+    'meditation': '冥想', 'thoughtless': '无思虑',
+    'vibration': '生命能量', 'vibrations': '生命能量',
+    'chakra': '轮穴', 'kundalini': '灵量',
+    'realisation': '自觉', 'self-realisation': '自觉',
+    'enlighten': '开悟', 'awaken': '觉醒',
 }
 
 def en_sent_to_zh_keywords(en_sent):
@@ -500,7 +518,7 @@ if not pairs:
                             file_resp = urllib.request.urlopen(file_req, timeout=30)
                             md_content = file_resp.read().decode("utf-8", errors="replace")
 
-                            # 从 YAML frontmatter 提取 source 链接
+                            # 从 YAML frontmatter 提取 source 和中文标题
                             source_m = re.search(r'^source:\s*(.+)$', md_content, re.MULTILINE)
                             if source_m:
                                 real_source = source_m.group(1).strip().strip('"').strip("'")
@@ -508,6 +526,14 @@ if not pairs:
                                 print(f"[translate_article] IMA source: {real_source}")
                             else:
                                 sahaja_link = f"https://www.sahaja.live/?p={target_media_id.split('_')[-1][:10]}"
+
+                            # 从 YAML frontmatter 提取中文标题
+                            title_m = re.search(r'^title:\s*["\']?(?:\d{4}-\d{2}-\d{2}\s*)?(.+?)["\']?\s*$', md_content, re.MULTILINE)
+                            if title_m:
+                                ima_title_cn = title_m.group(1).strip().rstrip('.md')
+                                if any('\u4e00' <= c <= '\u9fff' for c in ima_title_cn):
+                                    title_cn = ima_title_cn
+                                    print(f"[translate_article] IMA 中文标题: {title_cn}")
 
                             # 解析 YAML frontmatter 和正文
                             if md_content.startswith("---"):
