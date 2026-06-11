@@ -627,7 +627,7 @@ if pairs:
 if not pairs:
     IMA_CLIENT_ID = os.environ.get("IMA_CLIENT_ID", "")
     IMA_API_KEY = os.environ.get("IMA_API_KEY", "")
-    IMA_KB_ID = os.environ.get("IMA_KB_ID", "0019ef95d3004702")
+    IMA_KB_ID = os.environ.get("IMA_KB_ID", "XbbHhqibvE1vxMvwq4uzEF3dyxcQhSgOBCdi9gIAWWI=")
 
     if IMA_CLIENT_ID and IMA_API_KEY:
         print(f"[translate_article] 尝试从 IMA 知识库搜索 {date_str} 的中文翻译...")
