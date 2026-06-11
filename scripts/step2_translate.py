@@ -3,7 +3,7 @@ Step 2: Search sahaja.live for Chinese translation.
 Uses public WordPress REST API - no login required.
 Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html
 """
-import json, re, subprocess as sp, os, datetime as dt
+import json, re, subprocess as sp, os, datetime as dt, urllib.request
 
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
     article = json.load(f)
@@ -80,10 +80,9 @@ def parse_sahaja_text(full_text):
 
 def fetch_post(post_id):
     """Fetch a single post by ID, return (pairs, source_link, title_cn, text_raw)"""
-    r = sp.run(['curl', '-s', '-H', 'User-Agent: Mozilla/5.0',
-                'https://www.sahaja.live/wp-json/wp/v2/posts/' + str(post_id)],
-               capture_output=True, text=True, timeout=30)
-    pd = json.loads(r.stdout)
+    fu = 'https://www.sahaja.live/wp-json/wp/v2/posts/' + str(post_id)
+    freq = urllib.request.Request(fu, headers={'User-Agent': 'Mozilla/5.0'})
+    pd = json.loads(urllib.request.urlopen(freq, timeout=30).read())
     html = pd.get('content', {}).get('rendered', '')
     text_raw = re.sub(r'<[^>]+>', '\n', html)
     for ent, rep in [('&amp;','&'),('&#038;','&'),('&#8211;','-'),('&#8217;',"'"),
