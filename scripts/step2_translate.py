@@ -144,6 +144,35 @@ if not pairs:
         except Exception as e:
             print('[2b1] Public API failed: ' + str(e))
 
+
+if not pairs:
+    print('[2b1] Trying public WordPress API (no login)...')
+    def tw(t):
+        ws = [w for w in t.split() if len(w) > 2]
+        return ' '.join(ws[:5])
+    sq = tw(title_en)
+    if sq:
+        try:
+            u = 'https://www.sahaja.live/wp-json/wp/v2/posts?search=' + sq.replace(' ', '%20') + '&per_page=5'
+            print('[2b1] ' + u)
+            rs = sp.run(['curl', '-s', '-H', 'User-Agent: Mozilla/5.0', u], capture_output=True, text=True, timeout=30)
+            if rs.stdout[:1] == '[':
+                posts = json.loads(rs.stdout)
+                print('[2b1] Results: ' + str(len(posts)))
+                for p in posts:
+                    pid = p['id']
+                    candidate, s_link, t_cn, txt_raw = fetch_post_pairs(pid, None, UA)
+                    if has_chinese(candidate):
+                        pairs = candidate; sahaja_link = s_link
+                        ext = extract_title_cn_from_pairs(pairs, title_en)
+                        if ext: title_cn = ext
+                        print('[2b1] Hit post_id=' + str(pid) + ', pairs=' + str(len(pairs)))
+                        break
+                    else:
+                        print('[2b1] post_id=' + str(pid) + ' no CN, skip')
+        except Exception as e:
+            print('[2b1] Public API failed: ' + str(e))
+
 # ─── 2b: Online search ───
 sahaja_email = os.environ.get("SAHAJA_EMAIL", "")
 sahaja_pass = os.environ.get("SAHAJA_PASSWORD", "")
