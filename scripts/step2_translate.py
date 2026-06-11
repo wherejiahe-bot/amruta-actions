@@ -632,8 +632,8 @@ if not pairs:
     if IMA_CLIENT_ID and IMA_API_KEY:
         print(f"[translate_article] 尝试从 IMA 知识库搜索 {date_str} 的中文翻译...")
         ima_headers = {
-            "X-Client-Id": IMA_CLIENT_ID,
-            "X-Api-Key": IMA_API_KEY,
+            "ima-openapi-clientid": IMA_CLIENT_ID,
+            "ima-openapi-apikey": IMA_API_KEY,
             "Content-Type": "application/json"
         }
 
