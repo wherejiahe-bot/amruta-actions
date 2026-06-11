@@ -42,7 +42,7 @@ with open("/tmp/push_input.json", "w", encoding="utf-8") as f:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 result = subprocess.run(
     ["node", os.path.join(script_dir, "push_article.js"), "--file", "/tmp/push_input.json"],
-    capture_output=True, text=True, timeout=120
+    capture_output=True, text=True, timeout=120, env=os.environ.copy()
 )
 print(result.stdout)
 if result.stderr:
