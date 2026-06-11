@@ -704,7 +704,7 @@ if not pairs:
                             candidate = parse_sahaja_full_text(md_body)
                             if has_chinese(candidate):
                                 pairs = candidate
-                                sahaja_link = f"https://www.sahaja.live/?p={target_media_id.split('_')[-1][:10]}"
+                                # sahaja_link 已在上面从 frontmatter 中提取，不再覆盖
                                 extracted = extract_title_cn_from_pairs(pairs, title_en)
                                 if extracted:
                                     title_cn = extracted
