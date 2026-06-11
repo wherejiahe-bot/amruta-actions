@@ -677,6 +677,15 @@ if not pairs:
                             file_resp = urllib.request.urlopen(file_req, timeout=30)
                             md_content = file_resp.read().decode("utf-8", errors="replace")
 
+                            # 从 YAML frontmatter 提取 source 链接
+                            source_m = re.search(r'^source:\s*(.+)$', md_content, re.MULTILINE)
+                            if source_m:
+                                real_source = source_m.group(1).strip().strip('"').strip("'")
+                                sahaja_link = real_source
+                                print(f"[translate_article] IMA source: {real_source}")
+                            else:
+                                sahaja_link = f"https://www.sahaja.live/?p={target_media_id.split('_')[-1][:10]}"
+
                             # 解析 YAML frontmatter 和正文
                             if md_content.startswith("---"):
                                 parts = md_content.split("---", 2)
@@ -763,6 +772,7 @@ email_html = f"""<!DOCTYPE html>
 <hr style="border:none;border-top:1px solid #eee;margin:24px 0 16px 0;">
 <p style="color:#aaa;font-size:0.8em;margin:0;word-break:break-all;">
   <a href="https://amruta.today/" style="color:#aaa;">https://amruta.today/</a>
+  <br>
   <br>
   <a href="{final_link}" style="color:#aaa;">{final_link}</a>
 </p>
