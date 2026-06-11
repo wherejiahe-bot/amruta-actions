@@ -646,12 +646,25 @@ if not pairs:
         }).encode()
 
         try:
+            # 先直接测试 API 连通性
+            print(f"[translate_article] IMA KB: {IMA_KB_ID}, query: {date_str}")
             req = urllib.request.Request(ima_search_url, data=search_body, headers=ima_headers, method="POST")
             resp = urllib.request.urlopen(req, timeout=15)
-            search_result = json.loads(resp.read().decode("utf-8"))
+            resp_text = resp.read().decode("utf-8")
+            print(f"[translate_article] IMA 响应长度: {len(resp_text)} 字符")
+            search_result = json.loads(resp_text)
 
-            if search_result.get("code") == 0:
-                info_list = search_result.get("data", {}).get("info_list", [])
+            # 打印原始响应前 200 字符用于调试
+            print(f"[translate_article] IMA 原始响应: {resp_text[:200]}")
+
+            code = search_result.get("code", -1)
+            if code == 0:
+                data_field = search_result.get("data", {})
+                # IMA API 可能用 searched_knowledge_list 或 info_list
+                info_list = data_field.get("info_list") or data_field.get("searched_knowledge_list", [])
+                if not info_list and isinstance(search_result, dict):
+                    # 有时候直接返回 searched_knowledge_list 在顶层
+                    info_list = search_result.get("searched_knowledge_list", [])
                 print(f"[translate_article] IMA 搜索到 {len(info_list)} 条结果")
 
                 # 找 "sahaja live talks" 文件夹中的中文翻译 MD 文件
@@ -659,20 +672,23 @@ if not pairs:
                 target_title = ""
                 for item in info_list:
                     title = item.get("title", "")
+                    knowledge_node = item.get("knowledge", item)  # 可能嵌套在 knowledge 字段下
+                    mid = knowledge_node.get("media_id", item.get("media_id", ""))
                     # 优先找中英对照的 MD 文件（标题含中文的）
                     if any('\u4e00' <= c <= '\u9fff' for c in title):
-                        target_media_id = item.get("media_id", "")
+                        target_media_id = mid
                         target_title = title
-                        print(f"[translate_article] IMA 找到中文文件: {title}")
+                        print(f"[translate_article] IMA 找到中文文件: {title} (media_id: {mid[:30]}...)")
                         break
 
                 if not target_media_id:
                     # 没有中文标题，取第一个 MD 文件
                     for item in info_list:
-                        mid = item.get("media_id", "")
+                        knowledge_node = item.get("knowledge", item)
+                        mid = knowledge_node.get("media_id", item.get("media_id", ""))
                         if mid.startswith("markdown_"):
                             target_media_id = mid
-                            target_title = item.get("title", "")
+                            target_title = knowledge_node.get("title", item.get("title", ""))
                             print(f"[translate_article] IMA 取第一个 MD 文件: {target_title}")
                             break
 
