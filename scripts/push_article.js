@@ -15,8 +15,6 @@
 const https = require('https');
 const fs = require('fs');
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const TMT_SECRET_ID = process.env.TMT_SECRET_ID || '__TMT_SECRET_ID__';
-const TMT_SECRET_KEY = process.env.TMT_SECRET_KEY || '__TMT_SECRET_KEY__';
 const OWNER = 'wherejiahe-bot';
 const REPO = 'amruta-daily-archive';
 const BRANCH = 'main';
@@ -263,64 +261,7 @@ function synthSpeak() {
   window.speechSynthesis.speak(utter);
 }
 
-const TMT_SECRET_ID = '__TMT_SECRET_ID__';
-const TMT_SECRET_KEY = '__TMT_SECRET_KEY__';
-
-/* Tencent Cloud TMT: TC3-HMAC-SHA256 sign + call */
-async function tmtTranslate(text) {
-  const service = 'tmt', host = 'tmt.tencentcloudapi.com', region = 'ap-guangzhou';
-  const action = 'TextTranslate', version = '2018-03-21', algorithm = 'TC3-HMAC-SHA256';
-  const timestamp = Math.floor(Date.now() / 1000);
-  const date = new Date().toISOString().slice(0, 10);
-  const payload = JSON.stringify({SourceText: text, Source: 'en', Target: 'zh', ProjectId: 0});
-
-  async function sha256(msg) {
-    return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg))))
-      .map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-  async function hmacSha256(key, msg) {
-    const k = await crypto.subtle.importKey('raw', typeof key === 'string' ? new TextEncoder().encode(key) : key,
-      {name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
-    return new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(msg)));
-  }
-
-  const canonicalHeaders = 'content-type:application/json;charset=utf-8\nhost:' + host + '\n';
-  const signedHeaders = 'content-type;host';
-  const hashedPayload = await sha256(payload);
-  const canonicalRequest = 'POST\n/\n\n' + canonicalHeaders + signedHeaders + '\n' + hashedPayload;
-  const credentialScope = date + '/' + service + '/tc3_request';
-  const hashedCR = await sha256(canonicalRequest);
-  const stringToSign = algorithm + '\n' + timestamp + '\n' + credentialScope + '\n' + hashedCR;
-
-  const secretDate = await hmacSha256('TC3' + TMT_SECRET_KEY, date);
-  const secretService = await hmacSha256(secretDate, service);
-  const secretSigning = await hmacSha256(secretService, 'tc3_request');
-  const sigHex = Array.from(await hmacSha256(secretSigning, stringToSign))
-    .map(b => b.toString(16).padStart(2, '0')).join('');
-
-  const authorization = algorithm + ' Credential=' + TMT_SECRET_ID + '/' + credentialScope
-    + ', SignedHeaders=' + signedHeaders + ', Signature=' + sigHex;
-
-  const res = await fetch('https://' + host, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json;charset=utf-8',
-      'Host': host,
-      'X-TC-Action': action,
-      'X-TC-Timestamp': '' + timestamp,
-      'X-TC-Version': version,
-      'X-TC-Region': region,
-      'Authorization': authorization
-    },
-    body: payload
-  });
-  if (!res.ok) return '';
-  const d = await res.json();
-  return d?.Response?.TargetText || '';
-}
-
 async function translateDef(text) {
-  // Primary: MyMemory (fast, reliable)
   try {
     const url = 'https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text) + '&langpair=en|zh';
     const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
@@ -329,13 +270,7 @@ async function translateDef(text) {
     const t = d?.responseData?.translatedText || '';
     if (!t || t === text) return '';
     return t;
-  } catch(e) {}
-  // Fallback: Tencent TMT
-  try {
-    const t = await tmtTranslate(text);
-    if (t && t !== text) return t;
-  } catch(e) {}
-  return '';
+  } catch(e) { return ''; }
 }
 
 function closePopup() {
@@ -658,12 +593,6 @@ async function main() {
   // Step 1: Build and push daily HTML
   // Step 1: Build and push daily HTML
   const dailyHtml = buildDailyHtml(input);
-  // Obfuscate TMT secrets in HTML to avoid GitHub secret scanning detection
-  const htmlFinal = TMT_SECRET_ID && TMT_SECRET_ID !== '__TMT_SECRET_ID__'
-    ? dailyHtml
-        .replace("'__TMT_SECRET_ID__'", `'${TMT_SECRET_ID.slice(0,10)}' + '${TMT_SECRET_ID.slice(10)}'`)
-        .replace("'__TMT_SECRET_KEY__'", `'${TMT_SECRET_KEY.slice(0,10)}' + '${TMT_SECRET_KEY.slice(10)}'`)
-    : dailyHtml;
   const dailyPath = `daily/${date}.html`;
   console.log(`📝 Building ${dailyPath}...`);
   const existingDaily = await githubGet(dailyPath);
