@@ -127,6 +127,33 @@ def parse_sahaja_full_text(full_text):
 
     return result
 
+def parse_merged_text(full_text):
+    """解析 EN/ZH 合并在同一段落的格式（1978年早期讲话）。"""
+    blocks = [b.strip() for b in re.split(r'\n{2,}', full_text) if b.strip()]
+    result = []
+    start = 0
+    for i, b in enumerate(blocks):
+        cn = sum(1 for c in b if '\u4e00' <= c <= '\u9fff')
+        if cn == 0 and len(b) > 40 and re.search(r'[A-Z][a-z]', b):
+            start = i
+            break
+    for block in blocks[start:]:
+        cn = sum(1 for c in block if '\u4e00' <= c <= '\u9fff')
+        if cn == 0:
+            result.append([block, ''])
+            continue
+        m = re.split(r'(?<=[.!?])\s*(?=[\u4e00-\u9fff])', block, maxsplit=1)
+        if len(m) >= 2:
+            en_part, zh_part = m[0].strip(), m[1].strip()
+            if en_part and zh_part:
+                result.append([en_part, zh_part])
+                continue
+        for i, c in enumerate(block):
+            if '\u4e00' <= c <= '\u9fff':
+                result.append([block[:i].strip(), block[i:].strip()])
+                break
+    return result
+
 def has_chinese(pairs_list):
     return any(zh.strip() for _, zh in pairs_list)
 
@@ -702,6 +729,10 @@ if not pairs:
                             # 用原有的解析器处理正文
                             print(f"[translate_article] MD 正文前200字: {md_body[:200].replace(chr(10),' ')}")
                             candidate = parse_sahaja_full_text(md_body)
+                            if not has_chinese(candidate):
+                                # 尝试 EN/ZH 合并段落格式（1978年早期讲话）
+                                print("[translate_article] 尝试合并段落解析器...")
+                                candidate = parse_merged_text(md_body)
                             if has_chinese(candidate):
                                 pairs = candidate
                                 # sahaja_link 已在上面从 frontmatter 中提取，不再覆盖
