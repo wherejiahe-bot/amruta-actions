@@ -622,9 +622,10 @@ def _calc_similarity(en_text, zh_text):
     """计算一句英文和一段中文的语义相似度（0~1）"""
     if _align_model is None or not en_text or not zh_text:
         return 0
-    ev = _align_model.encode([en_text], show_progress_bar=False)
-    zv = _align_model.encode([zh_text], show_progress_bar=False)
-    sim = float(np.dot(ev, zv.T)[0][0])
+    ev = _align_model.encode([en_text], normalize_embeddings=True, show_progress_bar=False)
+    zv = _align_model.encode([zh_text], normalize_embeddings=True, show_progress_bar=False)
+    from sentence_transformers.util import cos_sim
+    sim = float(cos_sim(ev, zv)[0][0])
     return max(0, min(1, sim))
 
 def do_alignment_and_audit():
