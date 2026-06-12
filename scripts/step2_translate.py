@@ -617,25 +617,8 @@ try:
 except:
     _align_model = None
 
-def _align_by_semantics(en_sents, zh_pool):
-    """匈牙利算法全局最优匹配"""
-    if not en_sents or not zh_pool or _align_model is None:
-        return [(s, '') for s in en_sents]
-    en_vecs = _align_model.encode(en_sents, show_progress_bar=False)
-    zh_vecs = _align_model.encode(zh_pool, show_progress_bar=False)
-    n_en, n_zh = len(en_sents), len(zh_pool)
-    sim = np.dot(en_vecs, zh_vecs.T)
-    if n_en <= n_zh:
-        cost = -sim[:, :n_zh]
-        row_ind, col_ind = linear_sum_assignment(cost)
-        return [(en_sents[ri], zh_pool[ci]) for ri, ci in zip(row_ind, col_ind) if ci < n_zh]
-    else:
-        cost = -sim[:n_en, :]
-        row_ind, col_ind = linear_sum_assignment(cost)
-        return [(en_sents[ri], zh_pool[ci] if ci < n_zh else '') for ri, ci in zip(row_ind, col_ind)]
-
 def do_alignment_and_audit():
-    """阿里云翻译找头，IMA子句按顺序贴"""
+    """简版：IMA中文子句按顺序贴"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents: return
@@ -662,21 +645,13 @@ def do_alignment_and_audit():
             zs = zs.strip()
             if len(zs) >= 2: zh_pool.append(zs)
     if not zh_pool: pairs = [[s,""] for s in amruta_sents]; return
-    first_aliyun = aliyun_translate_title(amruta_sents[0])
-    head = 0
-    if first_aliyun:
-        for ci, zs in enumerate(zh_pool):
-            common = sum(1 for c in first_aliyun if c in zs and "一" <= c <= "鿿")
-            if common >= 2:
-                head = ci; break
-    print(f"[translate] 头位置: zh_pool[{head}] = {zh_pool[head][:15]}")
+    # 按顺序贴
     aligned = []
     for i, sent in enumerate(amruta_sents):
-        zi = head + i
-        if zi < len(zh_pool):
-            aligned.append([sent, zh_pool[zi]])
-        else: aligned.append([sent, ""])
+        if i < len(zh_pool):
+            aligned.append([sent, zh_pool[i]])
+        else:
+            aligned.append([sent, ""])
     pairs = [list(p) for p in aligned]
     cn = sum(1 for _,z in pairs if z.strip())
     print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
-
