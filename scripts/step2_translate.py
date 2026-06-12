@@ -652,31 +652,48 @@ def _align_by_semantics(en_sents, zh_pool):
 
 
 def do_alignment_and_audit():
-    """句级对齐：sentence-transformers 跨语言语义模型做全局最优对齐。"""
+    """句级对齐：段落锚定→截取IMA中文段→语义模型对齐。"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents:
         return
-    # 拼接IMA中文全文（跳过前2对头部元信息），按句号切分中文子句
+    stopwords = {'that','this','with','have','your','from','they','them',
+                 'will','what','when','into','been','were','also','just',
+                 'more','than','then','there','their','which','still','only',
+                 'such','very','even','does','dont','cant','wont','should'}
+    def best_para_for_sent(en_s, sahaja_pairs_list):
+        kws = set(re.findall(r'\b[a-z]{4,}\b', en_s.lower())) - stopwords
+        best_sc, best_pi = 0, 0
+        for pi, (ep, zp) in enumerate(sahaja_pairs_list):
+            if not zp.strip(): continue
+            ep_words = set(re.findall(r'\b[a-z]{4,}\b', ep.lower())) - stopwords
+            if not ep_words: continue
+            sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
+            if sc > best_sc:
+                best_sc, best_pi = sc, pi
+        return best_pi
+    # Step 1: 段落锚定 — 找到amruta内容在IMA中的起止段落
+    first_pi = best_para_for_sent(amruta_sents[0], pairs)
+    last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
+    if last_pi < first_pi:
+        last_pi = first_pi
+    # 排除元信息：跳过前2对
+    if first_pi < 2:
+        first_pi = 2
+    # Step 2: 从锚定范围内截取中文，按逗号句号都切（范围已缩小，不怕碎片）
     zh_pool = []
-    meta_kws = ['talk language','transcript','verified','subtitles','公开讲座','谈话语言','文本记录','以下翻译','供大家参考']
-    for pi in range(2, len(pairs)):
+    for pi in range(first_pi, min(last_pi + 1, len(pairs))):
         zp = pairs[pi][1]
-        for zs in re.split(r'[。！？]', zp):
+        for zs in re.split(r'[。！？，]', zp):
             zs = zs.strip()
-            if len(zs) < 6:
-                continue
-            if any(kw in zs.lower() for kw in meta_kws):
-                continue
-            zh_pool.append(zs)
-    if not zh_pool:
-        zh_pool = [pairs[pi][1] for pi in range(2, len(pairs)) if pairs[pi][1].strip()]
+            if len(zs) >= 4:
+                zh_pool.append(zs)
     if not zh_pool:
         pairs = [[s, ''] for s in amruta_sents]
-        print("[translate_article] IMA中文池为空")
+        print("[translate_article] IMA锚定范围中文池为空")
         return
-    # 用语义模型对齐
-    print(f"[translate_article] 对齐: {len(amruta_sents)}句英文 → {len(zh_pool)}句中文字句")
+    # Step 3: 语义模型对齐
+    print(f"[translate_article] 锚定[{first_pi}~{last_pi}]，{len(amruta_sents)}句英文→{len(zh_pool)}句中文字句")
     aligned_pairs = _align_by_semantics(amruta_sents, zh_pool)
     pairs = [list(p) for p in aligned_pairs]
     cn_count = sum(1 for _, zh in pairs if zh.strip())
