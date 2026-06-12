@@ -657,14 +657,18 @@ def do_alignment_and_audit():
     amruta_sents = split_sentences(content)
     if not amruta_sents:
         return
-    # 拼接IMA中文全文（跳过前2对头部元信息），按逗号句号切分中文子句
+    # 拼接IMA中文全文（跳过前2对头部元信息），按句号切分中文子句
     zh_pool = []
+    meta_kws = ['talk language','transcript','verified','subtitles','公开讲座','谈话语言','文本记录','以下翻译','供大家参考']
     for pi in range(2, len(pairs)):
         zp = pairs[pi][1]
-        for zs in re.split(r'[。！？，]', zp):
+        for zs in re.split(r'[。！？]', zp):
             zs = zs.strip()
-            if len(zs) > 3:
-                zh_pool.append(zs)
+            if len(zs) < 6:
+                continue
+            if any(kw in zs.lower() for kw in meta_kws):
+                continue
+            zh_pool.append(zs)
     if not zh_pool:
         zh_pool = [pairs[pi][1] for pi in range(2, len(pairs)) if pairs[pi][1].strip()]
     if not zh_pool:
