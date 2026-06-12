@@ -610,44 +610,73 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 import numpy as np
+
 from sentence_transformers import SentenceTransformer
+
 try:
+
     _bg = SentenceTransformer("BAAI/bge-small-zh-v1.5")
+
 except:
+
     _bg = None
 
 def do_alignment_and_audit():
-    """BGE整段中文匹配，不切子句"""
+
+    """BGE句级对齐：IMA中文按句号切分，阈值0.4，低于阈值用阿里云"""
+
     global pairs, title_cn
+
     amruta_sents = split_sentences(content)
+
     if not amruta_sents: return
+
     stopwords = {"that","this","with","have","your","from","they","them","will","what","when","into","been","were","also","just","more","than","then","there","their","which","still","only","such","very","even","does","dont","cant","wont","should"}
+
     def best_para_for_sent(en_s, lst):
+
         kws = set(re.findall(r"[a-z]{4,}", en_s.lower())) - stopwords
+
         best_sc, best_pi = 0, 0
+
         for pi, (ep, zp) in enumerate(lst):
+
             if not zp.strip(): continue
+
             epw = set(re.findall(r"[a-z]{4,}", ep.lower())) - stopwords
+
             if not epw: continue
+
             sc = len(kws & epw) / max(len(kws), 1) if kws else 0
+
             if sc > best_sc: best_sc, best_pi = sc, pi
+
         return best_pi
+
     first_pi = max(best_para_for_sent(amruta_sents[0], pairs), 2)
+
     last_pi = best_para_for_sent(amruta_sents[-1], pairs)
+
     if last_pi < first_pi: last_pi = first_pi
+
     for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
+
         if pairs[pi][1].strip(): last_pi = pi
+
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
-    # 直接用整段中文（不切子句)，跳过空段
+
+    # 按句号切分中文子句（不按逗号），长度>=2
     zh_sents = []
     para_indices = []
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
         zp = pairs[pi][1].strip()
-        if len(zp) >= 4:
-            zh_sents.append(zp)
-            para_indices.append(pi)
+        if len(zp) >= 2:
+            sub_sents = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) >= 2]
+            for ss in sub_sents:
+                zh_sents.append(ss)
+                para_indices.append(pi)
     if not zh_sents: pairs = [[s,""] for s in amruta_sents]; return
-    # BGE英-中匹配：每句英文找最佳IMA整段
+    # BGE英-中匹配：阈值0.4，低于阈值用阿里云
     used = set()
     aligned = []
     if _bg is not None:
@@ -661,7 +690,7 @@ def do_alignment_and_audit():
                 if pi in used: continue
                 sc = float(np.dot(en_vecs[i], zh_vecs[pi]))
                 if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_sents[pi], pi
-            if best_pi >= 0 and best_sc >= 0.3:
+            if best_pi >= 0 and best_sc >= 0.4:
                 aligned.append([sent, best_zp])
                 used.add(best_pi)
             else: aligned.append([sent, aliyun_zh or ""])
@@ -675,43 +704,65 @@ def do_alignment_and_audit():
         pairs[idx][1] = zh
     cn = sum(1 for _,z in pairs if z.strip())
     print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
-# ============ IMA KB Search + BGE Alignment ============ #
-if not pairs:
+
+def search_ima_kb(query_text, phase_name):
+    """搜索IMA知识库，返回是否找到有效pairs"""
+    global sahaja_link, pairs, title_cn
     cid = os.environ.get("IMA_CLIENT_ID", "")
     aik = os.environ.get("IMA_API_KEY", "")
-    if cid and aik:
-        print(f"[translate_article] Searching IMA KB for {date_str}...")
-        ima_headers = {"ima-openapi-clientid": cid, "ima-openapi-apikey": aik, "Content-Type": "application/json"}
-        query = '{"query":"' + title_en.replace("'", '')[:60] + ' ' + content[:60].replace("'", '') + '","kb_id":"XbbHhqibvE1vxMvwq4uzEF3dyxcQhSgOBCdi9gIAWWI=","page_num":1,"page_size":10}'
+    if not cid or not aik:
+        return False
+    print(f"[translate_article] IMA KB search {phase_name}: {query_text[:80]}...")
+    ima_headers = {"ima-openapi-clientid": cid, "ima-openapi-apikey": aik, "Content-Type": "application/json"}
+    safe_query = query_text.replace("'", "").replace('"', "")[:200]
+    query = json.dumps({"query": safe_query, "kb_id": "XbbHhqibvE1vxMvwq4uzEF3dyxcQhSgOBCdi9gIAWWI=", "page_num": 1, "page_size": 10})
+    try:
         req_ima = urllib.request.Request("https://ima.qq.com/openapi/wiki/v1/search_knowledge", data=query.encode(), headers=ima_headers, method='POST')
-        try:
-            resp_ima = urllib.request.urlopen(req_ima, timeout=15)
-            ima_result = json.loads(resp_ima.read())
-            docs = ima_result.get("data", {}).get("documents", [])
-            for doc in docs:
-                file_id = doc.get("kb_file_id", "")
-                if file_id:
-                    media_req = urllib.request.Request(f"https://ima.qq.com/openapi/wiki/v1/get_media_info?kb_file_id={file_id}", headers=ima_headers)
-                    media_resp = urllib.request.urlopen(media_req, timeout=15)
-                    media_data = json.loads(media_resp.read())
-                    url = media_data.get("data", {}).get("url", "")
-                    dl_headers_raw = media_data.get("data", {}).get("headers", {})
-                    if url:
-                        dl_req = urllib.request.Request(url, headers=dl_headers_raw)
-                        dl_resp = urllib.request.urlopen(dl_req, timeout=30)
-                        md_text = dl_resp.read().decode("utf-8").replace('\r\n', '\n')
-                        sahaja_link = url
-                        pairs1 = parse_sahaja_full_text(md_text)
-                        pairs2 = parse_merged_text(md_text)
-                        paired = pairs1 if len(pairs1) > len(pairs2) else pairs2
-                        if paired:
-                            pairs = paired
-                            tc = extract_title_cn_from_pairs(pairs, title_en)
-                            if tc: title_cn = tc
-                            print(f"[translate_article] IMA KB found: {len(pairs)} pairs")
-                            break
-        except Exception as e:
-            print(f"[translate_article] IMA KB search failed: {e}")
+        resp_ima = urllib.request.urlopen(req_ima, timeout=15)
+        ima_result = json.loads(resp_ima.read())
+        docs = ima_result.get("data", {}).get("documents", [])
+        if not docs:
+            print(f"[translate_article] IMA KB {phase_name}: no documents found")
+            return False
+        for doc in docs:
+            file_id = doc.get("kb_file_id", "")
+            if not file_id:
+                continue
+            media_req = urllib.request.Request(f"https://ima.qq.com/openapi/wiki/v1/get_media_info?kb_file_id={file_id}", headers=ima_headers)
+            media_resp = urllib.request.urlopen(media_req, timeout=15)
+            media_data = json.loads(media_resp.read())
+            url = media_data.get("data", {}).get("url", "")
+            dl_headers_raw = media_data.get("data", {}).get("headers", {})
+            if not url:
+                continue
+            dl_req = urllib.request.Request(url, headers=dl_headers_raw)
+            dl_resp = urllib.request.urlopen(dl_req, timeout=30)
+            md_text = dl_resp.read().decode("utf-8").replace('\r\n', '\n')
+            sahaja_link = url
+            pairs1 = parse_sahaja_full_text(md_text)
+            pairs2 = parse_merged_text(md_text)
+            paired = pairs1 if len(pairs1) > len(pairs2) else pairs2
+            if paired:
+                pairs = paired
+                tc = extract_title_cn_from_pairs(pairs, title_en)
+                if tc: title_cn = tc
+                print(f"[translate_article] IMA KB found: {len(pairs)} pairs")
+                return True
+        print(f"[translate_article] IMA KB {phase_name}: files found but no valid pairs")
+        return False
+    except Exception as e:
+        print(f"[translate_article] IMA KB {phase_name} failed: {e}")
+        return False
+
+# ============ IMA KB Two-Phase Search ============ #
+if not pairs:
+    # Phase 1: search by date + title
+    phase1_ok = search_ima_kb(f"{date_str} {title_en[:60]}", "Phase1(date+title)")
+    
+    # Phase 2: if empty, search by article body content
+    if not phase1_ok:
+        print(f"[translate_article] Phase1 empty, retrying with body content...")
+        phase2_ok = search_ima_kb(content[:200], "Phase2(body)")
 
 # BGE alignment (only if IMA found pairs with Chinese)
 if pairs and has_chinese(pairs):
@@ -732,7 +783,7 @@ if not pairs:
     paras = [p.strip() for p in content.split(chr(10)) if p.strip()]
     pairs = [[p, ""] for p in paras]
     print(f"[translate_article] No Chinese, EN only: {len(pairs)} paras")# ============ 标题翻译 + D Link ============ #
-if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
+if title_cn == title_en or not any("\u4e00" <= c <= "\u9fff" for c in title_cn):
     t = aliyun_translate_title(title_en)
     if t: title_cn = t
 final_link = sahaja_link or link
