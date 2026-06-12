@@ -635,7 +635,7 @@ def _align_by_semantics(en_sents, zh_pool):
         return [(en_sents[ri], zh_pool[ci] if ci < n_zh else '') for ri, ci in zip(row_ind, col_ind)]
 
 def do_alignment_and_audit():
-    """段落锚定+匈牙利算法语义对齐"""
+    """阿里云翻译做模板，匹配IMA中文子句"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents: return
@@ -656,6 +656,7 @@ def do_alignment_and_audit():
     for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
         if pairs[pi][1].strip(): last_pi = pi
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
+    # 构建 IMA 中文子句池
     zh_pool = []
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
         for zs in re.split(r"[。！？，]", pairs[pi][1]):
@@ -663,12 +664,34 @@ def do_alignment_and_audit():
             if len(zs) >= 4: zh_pool.append(zs)
     if not zh_pool:
         pairs = [[s,""] for s in amruta_sents]; return
-    print(f"[translate] 匈牙利算法: {len(amruta_sents)}句EN -> {len(zh_pool)}句ZH")
-    aligned = _align_by_semantics(amruta_sents, zh_pool)
+    print(f"[translate] 阿里云模板匹配: {len(amruta_sents)}句EN -> {len(zh_pool)}句ZH")
+    # 用阿里云翻译做模板，在IMA中找最佳匹配
+    used = set()
+    aligned = []
+    for i, sent in enumerate(amruta_sents):
+        aliyun_zh = aliyun_translate_title(sent)
+        if not aliyun_zh:
+            aligned.append([sent, ""]); continue
+        aliyun_clean = re.sub(r"^[\s,。！？、；：]+", "", aliyun_zh)
+        aliyun_clean = re.sub(r"[\s,。！？、；：]+$", "", aliyun_clean)
+        if not aliyun_clean:
+            aligned.append([sent, ""]); continue
+        # 在IMA中文池中找最佳匹配（中-中语义匹配）
+        best_sc, best_zs, best_pi = -1, "", -1
+        for pi, zs in enumerate(zh_pool):
+            if pi in used: continue
+            # 计算中文字符重叠率（快速筛选）
+            common = sum(1 for c in aliyun_clean if c in zs and "一" <= c <= "鿿")
+            if common > best_sc:
+                best_sc, best_zs, best_pi = common, zs, pi
+        if best_pi >= 0 and best_sc >= 2:
+            aligned.append([sent, best_zs])
+            used.add(best_pi)
+        else:
+            aligned.append([sent, aliyun_clean])  # 都底：用阿里云翻译
     pairs = [list(p) for p in aligned]
     cn = sum(1 for _,z in pairs if z.strip())
-    print(f"[translate] 对齐完成: {len(pairs)}句, {cn}句有中文")# ================================================================== #
-
+    print(f"[translate] 匹配完成: {len(pairs)}句, {cn}句有中文")
 # IMA 知识库备用（登录失败时使用）
 
 # ================================================================== #
