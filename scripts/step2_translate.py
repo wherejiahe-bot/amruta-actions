@@ -2618,7 +2618,14 @@ def do_alignment_and_audit():
 
 
 
-    first_pi = max(best_para_for_sent(amruta_sents[0], pairs), 2)
+    # If Chinese-only mode (all en are empty), skip para anchoring, use all sentences
+    all_en_empty = all(not en.strip() for en, _ in pairs)
+    if all_en_empty:
+        first_pi = 0
+        last_pi = len(pairs) - 1
+    else:
+        first_pi = max(best_para_for_sent(amruta_sents[0], pairs), 2)
+        last_pi = best_para_for_sent(amruta_sents[-1], pairs)
 
 
 
@@ -2866,8 +2873,10 @@ def search_ima_kb(query_text, phase_name):
         zh_text = urllib.request.urlopen(md_req, timeout=30).read().decode("utf-8").replace(chr(13)+chr(10), chr(10))
         sahaja_link = dl_url
         if zh_text.strip():
-            pairs = [["", zh_text.strip()]]
-            print(f'[translate_article] IMA KB OK: zh={len(zh_text)} chars | link set')
+            # Split Chinese text into sentence pairs for BGE alignment
+            zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
+            pairs = [["", s] for s in zh_sentences]
+            print(f'[translate_article] IMA KB OK: {len(pairs)} zh-sentences, {len(zh_text)} chars, link set')
             return True
         return False
     except Exception as e:
