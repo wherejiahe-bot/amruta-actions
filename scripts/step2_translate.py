@@ -3030,7 +3030,7 @@ def search_ima_kb(query_text, phase_name):
 # ============ IMA KB Date-Based Search ============ #
 if not pairs:
     # Phase 1: search by date string (YYYY-MM-DD) - date_str = e.g. "1978-06-12"
-    phase1_ok = search_ima_kb(date_str, "Phase1(date)")
+    phase1_ok = search_ima_kb(f"sahaja live talks {date_str}", "Phase1(date)")
     
     # Phase 2: if empty, search by body content
     if not phase1_ok:
