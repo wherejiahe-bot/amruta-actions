@@ -617,7 +617,7 @@ except:
     _bg = None
 
 def do_alignment_and_audit():
-    """BGE模型 + 阿里云桥接IMA"""
+    """BGE找头+顺序贴（中文全部来自IMA）"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents: return
@@ -635,7 +635,7 @@ def do_alignment_and_audit():
     first_pi = max(best_para_for_sent(amruta_sents[0], pairs), 2)
     last_pi = best_para_for_sent(amruta_sents[-1], pairs)
     if last_pi < first_pi: last_pi = first_pi
-    for pi in range(last_pi+1, min(last_pi+10, len(pairs))):
+    for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
         if pairs[pi][1].strip(): last_pi = pi
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
     zh_pool = []
@@ -644,52 +644,34 @@ def do_alignment_and_audit():
             zs = zs.strip()
             if len(zs) >= 4: zh_pool.append(zs)
     if not zh_pool: pairs = [[s,""] for s in amruta_sents]; return
-    # 阿里云翻译做模板 + BGE中-中匹配
-    if _bg is None:
-        # fallback: 顺序贴
-        pairs = [[s, zh_pool[i] if i < len(zh_pool) else ""] for i, s in enumerate(amruta_sents)]
-        cn = sum(1 for _,z in pairs if z.strip())
-        print(f"[translate] fallback顺序贴: {len(pairs)}句, {cn}句有中文"); return
-    print(f"[translate] BGE匹配: {len(amruta_sents)}句EN -> {len(zh_pool)}句ZH")
-    # 先编码所有 IMA 中文子句
-    zh_vecs = _bg.encode(zh_pool, normalize_embeddings=True, show_progress_bar=False)
-    used = set()
+    # BGE找头 + 顺序贴
+    head = 0
+    if _bg is not None:
+        first_aliyun = aliyun_translate_title(amruta_sents[0])
+        if first_aliyun:
+            av = _bg.encode([first_aliyun], normalize_embeddings=True, show_progress_bar=False)[0]
+            zv = _bg.encode(zh_pool, normalize_embeddings=True, show_progress_bar=False)
+            best_sc, head = -1, 0
+            for pi, v in enumerate(zv):
+                sc = float(np.dot(av, v))
+                if sc > best_sc: best_sc, head = sc, pi
+            print(f"[translate] BGE头位置: zh_pool[{head}] = {zh_pool[head][:20]}")
+    # 从头开始按顺序分配（中文全部来自IMA）
     aligned = []
     for i, sent in enumerate(amruta_sents):
-        aliyun_zh = aliyun_translate_title(sent)
-        if not aliyun_zh:
-            aligned.append([sent, ""]); continue
-        # 编码阿里云翻译
-        av = _bg.encode([aliyun_zh], normalize_embeddings=True, show_progress_bar=False)[0]
-        # 找最佳匹配
-        best_sc, best_zs, best_pi = -1, "", -1
-        for pi, zv in enumerate(zh_vecs):
-            if pi in used: continue
-            sc = float(np.dot(av, zv))
-            if sc > best_sc: best_sc, best_zs, best_pi = sc, zh_pool[pi], pi
-        if best_pi >= 0 and best_sc >= 0.4:
-            aligned.append([sent, best_zs])
-            used.add(best_pi)
-        else:
-            aligned.append([sent, aliyun_zh])
+        zi = head + i
+        if zi < len(zh_pool):
+            aligned.append([sent, zh_pool[zi]])
+        else: aligned.append([sent, ""])
     pairs = [list(p) for p in aligned]
-    cn = sum(1 for _,z in pairs if z.strip())
-    print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
-    # 后处理：修正特定翻译错误
+    # 后处理：修正翻译错误
     for idx in range(len(pairs)):
         zh = pairs[idx][1]
         zh = zh.replace("左翼还是右翼", "偏左或偏右")
         zh = zh.replace("左翼或右翼", "偏左或偏右")
         pairs[idx][1] = zh
-
-# 标题翻译
-if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
-    translated = aliyun_translate_title(title_en)
-    if translated: title_cn = translated
-
-# 底部链接优先用 IMA source
-final_link = sahaja_link or link
-
+    cn = sum(1 for _,z in pairs if z.strip())
+    print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
 # ============ Aliyun translation + HTML build ============ #
 if pairs:
     do_alignment_and_audit()
