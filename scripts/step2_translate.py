@@ -2858,8 +2858,8 @@ def search_ima_kb(query_text, phase_name):
             return False
         media_req = urllib.request.Request(f"https://ima.qq.com/openapi/wiki/v1/get_media_info?media_id={fid}", headers=ima_headers)
         media_data = json.loads(urllib.request.urlopen(media_req, timeout=15).read()).get("data", {})
-        dl_url = media_data.get("url", "")
-        dl_hdrs = media_data.get("headers", {})
+        dl_url = media_data.get("url_info", {}).get("url", "")
+        dl_hdrs = media_data.get("url_info", {}).get("headers", {})
         if not dl_url:
             return False
         md_req = urllib.request.Request(dl_url, headers=dl_hdrs)
