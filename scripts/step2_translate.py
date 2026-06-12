@@ -348,19 +348,18 @@ def do_alignment_and_audit():
     pairs = aligned
     cn_count = sum(1 for _, zh in pairs if zh.strip())
     print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
-    # 审核：填空+去重
+    # 审核：填空+去重+词典词检测
     print("\n" + "="*60)
     print("[审核+修正] 逐句质量检查")
     print("="*60)
     zh_seen = {}
     fixed_count = 0
     pool_idx = 0
-    sent_pool = list(ima_zh_pool)  # 备份，按顺序取
+    sent_pool = list(ima_zh_pool)
     for idx in range(len(pairs)):
         en_s, zh_s = pairs[idx]
         tag, reason = "✅", ""
         if not zh_s.strip() or len(zh_s.strip()) < 4:
-            # 空中文 → 从IMA池按顺序取
             while pool_idx < len(sent_pool) and sent_pool[pool_idx] in zh_seen.values():
                 pool_idx += 1
             if pool_idx < len(sent_pool):
@@ -374,7 +373,6 @@ def do_alignment_and_audit():
                 fixed_count += 1
         else:
             if zh_s in zh_seen:
-                # 重复 → 从池中取下一句
                 while pool_idx < len(sent_pool) and sent_pool[pool_idx] in zh_seen.values():
                     pool_idx += 1
                 if pool_idx < len(sent_pool):
@@ -385,6 +383,24 @@ def do_alignment_and_audit():
                     fixed_count += 1
                 else:
                     tag, reason = "🔄", "重复无候选"
+            else:
+                # 词典词检测：英文句的关键词是否在中文中出现
+                zh_kws = en_sent_to_zh_keywords(en_s)
+                if zh_kws:
+                    hit = sum(1 for kw in zh_kws if kw in zh_s)
+                    if hit < 1 and tag == "✅":
+                        # 尝试在池中找更好的
+                        for zs2 in sent_pool:
+                            if zs2 not in zh_seen.values() and zs2 != zh_s:
+                                hit2 = sum(1 for kw in zh_kws if kw in zs2)
+                                if hit2 > hit:
+                                    pairs[idx][1] = zs2
+                                    zh_s = zs2
+                                    tag, reason = "🔧", f"词典词0命中→替换"
+                                    fixed_count += 1
+                                    break
+                        if tag == "✅":
+                            tag, reason = "❓", f"词典词0/{len(zh_kws)}命中"
         zh_seen[zh_s] = idx
         en_preview = en_s[:50].replace('\n', ' ')
         zh_preview = zh_s[:25].replace('\n', ' ') if zh_s else "（空）"
