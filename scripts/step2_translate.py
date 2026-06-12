@@ -339,7 +339,7 @@ def do_alignment_and_audit():
         if best_sc >= 8 and match_ratio >= 0.4:
             final_zh = best_zs
         else:
-            final_zh = aliyun_clean
+            final_zh = ''
         aligned.append([sent, final_zh])
         if (i + 1) % 5 == 0:
             print(f"[translate] 阿里云翻译进度: {i+1}/{total}")
@@ -348,32 +348,44 @@ def do_alignment_and_audit():
     pairs = aligned
     cn_count = sum(1 for _, zh in pairs if zh.strip())
     print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
-    # 简单审核：去重
+    # 审核：填空+去重
     print("\n" + "="*60)
     print("[审核+修正] 逐句质量检查")
     print("="*60)
     zh_seen = {}
     fixed_count = 0
+    pool_idx = 0
+    sent_pool = list(ima_zh_pool)  # 备份，按顺序取
     for idx in range(len(pairs)):
         en_s, zh_s = pairs[idx]
         tag, reason = "✅", ""
-        if not zh_s.strip():
-            tag, reason = "❌", "空中文"
-            fixed_count += 1
+        if not zh_s.strip() or len(zh_s.strip()) < 4:
+            # 空中文 → 从IMA池按顺序取
+            while pool_idx < len(sent_pool) and sent_pool[pool_idx] in zh_seen.values():
+                pool_idx += 1
+            if pool_idx < len(sent_pool):
+                pairs[idx][1] = sent_pool[pool_idx]
+                zh_s = sent_pool[pool_idx]
+                pool_idx += 1
+                tag, reason = "🔧", f"池取第{pool_idx}句"
+                fixed_count += 1
+            else:
+                tag, reason = "❌", "空中文(池已耗尽)"
+                fixed_count += 1
         else:
             if zh_s in zh_seen:
-                # 去重：尝试在ima_zh_pool中找其他匹配
-                for zs in ima_zh_pool:
-                    if zs not in zh_seen.values():
-                        pairs[idx][1] = zs
-                        zh_s = zs
-                        tag, reason = "🔧", "去重"
-                        fixed_count += 1
-                        break
-                if reason == "✅":
+                # 重复 → 从池中取下一句
+                while pool_idx < len(sent_pool) and sent_pool[pool_idx] in zh_seen.values():
+                    pool_idx += 1
+                if pool_idx < len(sent_pool):
+                    pairs[idx][1] = sent_pool[pool_idx]
+                    zh_s = sent_pool[pool_idx]
+                    pool_idx += 1
+                    tag, reason = "🔧", f"去重取第{pool_idx}句"
+                    fixed_count += 1
+                else:
                     tag, reason = "🔄", "重复无候选"
-            else:
-                zh_seen[zh_s] = idx
+        zh_seen[zh_s] = idx
         en_preview = en_s[:50].replace('\n', ' ')
         zh_preview = zh_s[:25].replace('\n', ' ') if zh_s else "（空）"
         print(f"[{idx+1:02d}] {tag}  EN: {en_preview}")
