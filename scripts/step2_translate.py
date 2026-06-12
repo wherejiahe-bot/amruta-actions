@@ -696,7 +696,7 @@ def do_alignment_and_audit():
         # 初始过滤：跳过问句、过短(<8字)、语义太低的子句
         while cursor < len(zh_pool):
             zs = zh_pool[cursor]
-            if len(zs) < 8 or re.search(r'[呢吗]$', zs):
+            if len(zs) < 4 or re.search(r'[呢吗]$', zs):
                 cursor += 1; continue
             en_kw = [w.strip('.,!?"\'-()').lower() for w in sent.split() if len(w.strip('.,!?"\'-()')) > 2]
             dict_hits = sum(1 for kw in en_kw if kw in EN_ZH_DICT and EN_ZH_DICT[kw] in zs)
@@ -718,8 +718,10 @@ def do_alignment_and_audit():
             if i < len(amruta_sents) - 1:
                 sim_nxt = _calc_similarity(amruta_sents[i+1], zs)
                 if sim_cur < sim_nxt:
-                    print(f"      子句{cursor+1}: sim_cur={sim_cur:.3f} < sim_nxt={sim_nxt:.3f} → 留到下一句")
+                    print(f"      子句{cursor+1}: cur={sim_cur:.3f} < nxt={sim_nxt:.3f} → 留到下一句")
                     break
+                else:
+                    print(f"      子句{cursor+1}: cur={sim_cur:.3f} >= nxt={sim_nxt:.3f} → 合并")
             merged = merged + "，" + zs
             cursor += 1
         aligned.append([sent, merged])
