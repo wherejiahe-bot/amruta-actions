@@ -612,47 +612,23 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
-# 跨语言语义模型（sentence-transformers，用于句子对齐）
+# 跨语言语义模型（sentence-transformers，用于对齐审核）
 try:
     _align_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 except:
     _align_model = None
 
-def _align_by_semantics(en_sents, zh_pool):
-    """用语义向量+匈牙利算法做全局最优对齐"""
-    if not en_sents or not zh_pool or _align_model is None:
-        return [(s, '') for s in en_sents]
-    # 编码
-    en_vecs = _align_model.encode(en_sents, show_progress_bar=False)
-    zh_vecs = _align_model.encode(zh_pool, show_progress_bar=False)
-    # 相似度矩阵
-    sim = np.dot(en_vecs, zh_vecs.T)
-    # 如英文>中文，对中文做padding；反之亦然
-    n_en, n_zh = len(en_sents), len(zh_pool)
-    if n_en <= n_zh:
-        row_ind, col_ind = linear_sum_assignment(-sim[:, :n_en].T) if n_zh >= n_en else (np.arange(n_en), np.zeros(n_en, dtype=int))
-        # 用匈牙利算法：每个英文找一个中文
-        cost = -sim[:, :n_zh]
-        if n_en > n_zh:
-            # 补padding
-            padding = np.zeros((n_en, n_en - n_zh))
-            cost = np.hstack([cost, padding])
-        row_ind, col_ind = linear_sum_assignment(cost)
-        result = []
-        for ri, ci in zip(row_ind, col_ind):
-            if ci < n_zh:
-                result.append((en_sents[ri], zh_pool[ci]))
-            else:
-                result.append((en_sents[ri], ''))
-        return result
-    else:
-        cost = -sim[:n_en, :]
-        row_ind, col_ind = linear_sum_assignment(cost)
-        return [(en_sents[ri], zh_pool[ci] if ci < n_zh else '') for ri, ci in zip(row_ind, col_ind)]
-
+def _calc_similarity(en_text, zh_text):
+    """计算一句英文和一句中文的语义相似度（0~1）"""
+    if _align_model is None or not en_text or not zh_text:
+        return 0
+    ev = _align_model.encode([en_text], show_progress_bar=False)
+    zv = _align_model.encode([zh_text], show_progress_bar=False)
+    sim = float(np.dot(ev, zv.T)[0][0])
+    return max(0, min(1, sim))
 
 def do_alignment_and_audit():
-    """句级对齐：段落锚定→截取IMA中文段→语义模型对齐。"""
+    """句级对齐：段落锚定→顺序分配→语义审核修正。"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents:
@@ -662,25 +638,20 @@ def do_alignment_and_audit():
                  'more','than','then','there','their','which','still','only',
                  'such','very','even','does','dont','cant','wont','should'}
     def best_para_for_sent(en_s, sahaja_pairs_list):
-        kws = set(re.findall(r'\b[a-z]{4,}\b', en_s.lower())) - stopwords
+        kws = set(re.findall(r'[a-z]{4,}', en_s.lower())) - stopwords
         best_sc, best_pi = 0, 0
         for pi, (ep, zp) in enumerate(sahaja_pairs_list):
             if not zp.strip(): continue
-            ep_words = set(re.findall(r'\b[a-z]{4,}\b', ep.lower())) - stopwords
+            ep_words = set(re.findall(r'[a-z]{4,}', ep.lower())) - stopwords
             if not ep_words: continue
             sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
             if sc > best_sc:
                 best_sc, best_pi = sc, pi
         return best_pi
-    # Step 1: 段落锚定 — 找到amruta内容在IMA中的起止段落
     first_pi = best_para_for_sent(amruta_sents[0], pairs)
     last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
-    if last_pi < first_pi:
-        last_pi = first_pi
-    # 排除元信息：跳过前2对
-    if first_pi < 2:
-        first_pi = 2
-    # Step 2: 从锚定范围内截取中文，按逗号句号都切（范围已缩小，不怕碎片）
+    if last_pi < first_pi: last_pi = first_pi
+    if first_pi < 2: first_pi = 2
     zh_pool = []
     for pi in range(first_pi, min(last_pi + 1, len(pairs))):
         zp = pairs[pi][1]
@@ -692,13 +663,55 @@ def do_alignment_and_audit():
         pairs = [[s, ''] for s in amruta_sents]
         print("[translate_article] IMA锚定范围中文池为空")
         return
-    # Step 3: 语义模型对齐
-    print(f"[translate_article] 锚定[{first_pi}~{last_pi}]，{len(amruta_sents)}句英文→{len(zh_pool)}句中文字句")
-    aligned_pairs = _align_by_semantics(amruta_sents, zh_pool)
-    pairs = [list(p) for p in aligned_pairs]
+    # 顺序分配
+    aligned = []
+    used_idx = set()
+    for i, sent in enumerate(amruta_sents):
+        if i < len(zh_pool):
+            aligned.append([sent, zh_pool[i]])
+            used_idx.add(i)
+        else:
+            aligned.append([sent, ''])
+    pairs = aligned
+    n_en, n_zh = len(amruta_sents), len(zh_pool)
+    print(f"[translate_article] 锚定[{first_pi}~{last_pi}]，顺序分配 {n_en}句→{n_zh}子句")
+    # 语义审核修正
+    print("\n" + "="*60)
+    print("[审核+修正] 逐句语义检查")
+    print("="*60)
+    fixed_count = 0
+    for idx in range(len(pairs)):
+        en_s, zh_s = pairs[idx]
+        tag, reason = "✅", ""
+        sim = _calc_similarity(en_s, zh_s)
+        if sim < 0.25 or not zh_s.strip():
+            best_sim, best_zs = sim, zh_s if zh_s else ''
+            best_pi = -1
+            for pi, ps in enumerate(zh_pool):
+                if pi in used_idx:
+                    continue
+                sim2 = _calc_similarity(en_s, ps)
+                if sim2 > best_sim:
+                    best_sim, best_zs, best_pi = sim2, ps, pi
+            if best_zs and best_zs != zh_s and (best_sim > 0.3 or not zh_s.strip()):
+                pairs[idx][1] = best_zs
+                if best_pi >= 0:
+                    used_idx.add(best_pi)
+                tag, reason = "🔧", f"修正(sim:{sim:.2f}->{best_sim:.2f})"
+                fixed_count += 1
+            elif sim < 0.25:
+                tag, reason = "❓", f"低相似度(sim:{sim:.2f})，无更佳候选"
+        en_preview = en_s[:50].replace('\n', ' ')
+        zh_preview = zh_s[:25].replace('\n', ' ') if zh_s else "（空）"
+        print(f"[{idx+1:02d}] {tag}  EN: {en_preview}")
+        print(f"        ZH: {zh_preview}  (sim:{sim:.2f})")
+        if reason:
+            print(f"        ⚑  {reason}")
+    print("="*60)
+    print(f"[审核] 共修正 {fixed_count} 处")
+    print("="*60 + "\n")
     cn_count = sum(1 for _, zh in pairs if zh.strip())
-    print(f"[translate_article] 语义对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
-
+    print(f"[translate_article] 对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
 # ================================================================== #
 
 # IMA 知识库备用（登录失败时使用）
