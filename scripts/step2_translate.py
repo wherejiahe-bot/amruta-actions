@@ -675,20 +675,7 @@ def do_alignment_and_audit():
         pairs[idx][1] = zh
     cn = sum(1 for _,z in pairs if z.strip())
     print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
-# ============ Aliyun translation + HTML build ============ #
-if pairs:
-    do_alignment_and_audit()
-else:
-    amruta_sents = split_sentences(content)
-    if amruta_sents:
-        aligned = []
-        for s in amruta_sents:
-            zh = aliyun_translate_title(s)
-            aligned.append([s, zh or ""])
-        pairs = [list(p) for p in aligned]
-        print(f"[translate_article] Aliyun done: {len(pairs)} sentences")
-
-# ============ IMA KB Search ============ #
+# ============ IMA KB Search + BGE Alignment ============ #
 if not pairs:
     cid = os.environ.get("IMA_CLIENT_ID", "")
     aik = os.environ.get("IMA_API_KEY", "")
@@ -716,9 +703,9 @@ if not pairs:
                         sahaja_link = url
                         pairs1 = parse_sahaja_full_text(md_text)
                         pairs2 = parse_merged_text(md_text)
-                        parsed = pairs1 if len(pairs1) > len(pairs2) else pairs2
-                        if parsed:
-                            pairs = parsed
+                        paired = pairs1 if len(pairs1) > len(pairs2) else pairs2
+                        if paired:
+                            pairs = paired
                             tc = extract_title_cn_from_pairs(pairs, title_en)
                             if tc: title_cn = tc
                             print(f"[translate_article] IMA KB found: {len(pairs)} pairs")
@@ -726,13 +713,25 @@ if not pairs:
         except Exception as e:
             print(f"[translate_article] IMA KB search failed: {e}")
 
-# ============ Fallback ============ #
+# BGE alignment (only if IMA found pairs with Chinese)
+if pairs and has_chinese(pairs):
+    do_alignment_and_audit()
+else:
+    # Aliyun fallback
+    amruta_sents = split_sentences(content)
+    if amruta_sents:
+        aligned = []
+        for s in amruta_sents:
+            zh = aliyun_translate_title(s)
+            aligned.append([s, zh or ""])
+        pairs = [list(p) for p in aligned]
+        print(f"[translate_article] Aliyun done: {len(pairs)} sentences")
+
+# Fallback: no pairs at all
 if not pairs:
     paras = [p.strip() for p in content.split(chr(10)) if p.strip()]
     pairs = [[p, ""] for p in paras]
-    print(f"[translate_article] No Chinese, EN only: {len(pairs)} paras")
-
-# ============ 标题翻译 + D Link ============ #
+    print(f"[translate_article] No Chinese, EN only: {len(pairs)} paras")# ============ 标题翻译 + D Link ============ #
 if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
     t = aliyun_translate_title(title_en)
     if t: title_cn = t
