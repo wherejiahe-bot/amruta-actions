@@ -2902,11 +2902,11 @@ def search_ima_kb(query_text, phase_name):
 
 
 
-        print(f"[translate_article] IMA KB {phase_name}: found {{len(docs)}} document(s)")
+        print(f"[translate_article] IMA KB {phase_name}: found {len(docs)} document(s)")
         for di, doc in enumerate(docs):
             dt = doc.get("title", "no-title")[:60]
             df = doc.get("media_id", "")[:20]
-            print(f"[translate_article]   doc[{{di}}]: {{dt}} | file_id={{df}}...")
+            print(f"[translate_article]   doc[{di}]: {dt} | file_id={df}...")
 
 
 
