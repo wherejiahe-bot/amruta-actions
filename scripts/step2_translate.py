@@ -2837,7 +2837,7 @@ def search_ima_kb(query_text, phase_name):
     safe_query = query_text.replace("'", "").replace('"', "")[:200]
     query = json.dumps({"query": safe_query, "knowledge_base_id": "sEgPPEWFuYNq58qNKa6FunW0CAU7wv7JwMEXCUJwaVY=", "page_num": 1, "page_size": 20})
     try:
-        req_ima = urllib.request.Request("https://ima.qq.com/openapi/wiki/v1/search_knowledge", data=query.encode(), headers=ima_headers, method="POST")
+        req_ima = urllib.request.Request("https://ima.qq.com/openapi/wiki/v1/search_knowledge", data=query.encode(), headers=ima_headers, method='POST')
         resp_ima = urllib.request.urlopen(req_ima, timeout=15)
         ima_result = json.loads(resp_ima.read())
         docs = ima_result.get("data", {}).get("info_list", [])
@@ -2863,9 +2863,7 @@ def search_ima_kb(query_text, phase_name):
         if not dl_url:
             return False
         md_req = urllib.request.Request(dl_url, headers=dl_hdrs)
-        zh_text = urllib.request.urlopen(md_req, timeout=30).read().decode("utf-8").replace("
-", "
-")
+        zh_text = urllib.request.urlopen(md_req, timeout=30).read().decode("utf-8").replace(chr(13)+chr(10), chr(10))
         sahaja_link = dl_url
         if zh_text.strip():
             pairs = [["", zh_text.strip()]]
