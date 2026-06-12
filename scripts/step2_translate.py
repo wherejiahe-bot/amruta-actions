@@ -303,7 +303,7 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
     return zh_sents[min(zh_idx, len(zh_sents) - 1)]
 
 def do_alignment_and_audit():
-    """句级对齐+审核修正。直接操作全局 pairs, title_cn, content, title_en。"""
+    """句级对齐+审核修正。位置切割+标点边界对齐。"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents:
@@ -313,11 +313,11 @@ def do_alignment_and_audit():
                  'more','than','then','there','their','which','still','only',
                  'such','very','even','does','dont','cant','wont','should'}
     def best_para_for_sent(en_s, sahaja_pairs_list):
-        kws = set(re.findall(r'\b[a-z]{4,}\b', en_s.lower())) - stopwords
+        kws = set(re.findall(r'[a-z]{4,}', en_s.lower())) - stopwords
         best_sc, best_pi = 0, 0
         for pi, (ep, zp) in enumerate(sahaja_pairs_list):
             if not zp.strip(): continue
-            ep_words = set(re.findall(r'\b[a-z]{4,}\b', ep.lower())) - stopwords
+            ep_words = set(re.findall(r'[a-z]{4,}', ep.lower())) - stopwords
             if not ep_words: continue
             sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
             if sc > best_sc:
@@ -327,89 +327,118 @@ def do_alignment_and_audit():
     last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
     if last_pi < first_pi:
         last_pi = first_pi
-    # 方案：全中文拼接+按英文位置比例切割
+    # 拼接锚定范围内的所有英文和中文
     all_zh = "".join(pairs[pi][1] for pi in range(first_pi, last_pi + 1))
     all_en = " ".join(pairs[pi][0] for pi in range(first_pi, last_pi + 1))
-    # 保存原始中文池（供审核用）
+    # 保存原始中文子句（用于审核修正）
     orig_zh_pool = []
     for pi in range(first_pi, last_pi + 1):
-        for zs in re.split(r'[\u3002\uff01\uff1f]', pairs[pi][1]):
+        for zs in re.split(r'[。！？]', pairs[pi][1]):
             zs = zs.strip()
             if len(zs) > 3:
                 orig_zh_pool.append(zs)
-    # 对每句amruta，在all_en中找最佳位置
+    # 对每句amruta做位置定位+中文切割
     aligned = []
     prev_end = 0
     for i, sent in enumerate(amruta_sents):
+        # 在all_en中找位置
         pos = -1
-        for look_len in [30, 20, 15, 10]:
+        for look_len in [30, 25, 20, 15, 10]:
             if len(sent) >= look_len:
-                pos = all_en.find(sent[:look_len], prev_end)
-                if pos >= 0:
-                    break
+                search_key = sent[:look_len]
+                # 跳过前导空格和特殊字符
+                search_key = re.sub(r'^[\[\]\s“”‘’.?!,\-;:"'–]+', '', search_key)
+                if len(search_key) >= look_len - 5:
+                    pos = all_en.find(search_key, max(prev_end - 20, 0))
+                    if pos >= 0:
+                        break
         if pos >= 0:
-            ratio = pos / max(len(all_en), 1)
-            next_ratio = (pos + len(sent)) / max(len(all_en), 1)
-            zh_start = int(ratio * len(all_zh))
-            zh_end = int(next_ratio * len(all_zh))
-            if i == len(amruta_sents) - 1:
-                zh_chunk = all_zh[zh_start:]
-            else:
-                zh_chunk = all_zh[zh_start:zh_end]
-            prev_end = pos + len(sent)
+            # 按位置比例切中文
+            next_pos = pos + len(sent)
+            # 用英文位置的中心点来映射中文位置
+            mid_ratio = (pos + next_pos / 2) / max(len(all_en), 1)
+            zh_center = int(mid_ratio * len(all_zh))
+            # 按英文段落比例确定宽度
+            en_width = len(sent)
+            zh_width = int(en_width / max(len(all_en), 1) * len(all_zh))
+            zh_start = max(zh_center - zh_width // 2, 0)
+            zh_end = min(zh_start + zh_width, len(all_zh))
         else:
-            # 无法定位，按均匀比例切
+            # 找不到位置，均匀比例
             zh_start = int(i / len(amruta_sents) * len(all_zh))
             zh_end = int((i + 1) / len(amruta_sents) * len(all_zh))
+        # 调整起始边界到最近的句子开头（前一个句号+1）
+        if i > 0:
+            best_start = zh_start
+            for p in '。！？':
+                pos = all_zh.rfind(p, 0, zh_start)
+                if pos >= 0 and zh_start - (pos + 1) < 15:
+                    best_start = min(best_start, pos + 1)
+            zh_start = best_start
+        # 调整结束边界到最近的句号
+        if i < len(amruta_sents) - 1:
+            best_end = zh_end
+            for p in '。！？':
+                pos = all_zh.find(p, zh_end - 2)
+                if pos >= 0 and pos - zh_end < 10:
+                    best_end = max(best_end, pos + 1)
+            # 但不要超过下一句的起始
+            zh_end = min(best_end, len(all_zh))
+        # 取中文
+        if i == len(amruta_sents) - 1:
+            zh_chunk = all_zh[zh_start:]
+        else:
             zh_chunk = all_zh[zh_start:zh_end]
+        # 清理开头和结尾的孤零字符
+        zh_chunk = re.sub(r'^[，,、\s“”]+', '', zh_chunk)
+        zh_chunk = re.sub(r'[。！？，,、\s]+$', '', zh_chunk)
         aligned.append([sent, zh_chunk.strip()])
-    print(f"[translate_article] \u951a\u5b9a\u6bb5\u843d [{first_pi}~{last_pi}]\uff0c\u4f4d\u7f6e\u5207\u5272: {len(aligned)} \u53e5")
+        if pos >= 0:
+            prev_end = pos + len(sent)
+    print(f"[translate_article] 锚定段落 [{first_pi}~{last_pi}]，对齐: {len(aligned)} 句")
     pairs = aligned
     cn_count = sum(1 for _, zh in pairs if zh.strip())
-    print(f"[translate_article] \u53e5\u7ea7\u5bf9\u9f50\u5b8c\u6210\uff0c\u5171 {len(pairs)} \u53e5\uff0c{cn_count} \u53e5\u6709\u4e2d\u6587")
-    # 审核修正：从原始中文池中，按顺序为每句分配中文
-    # 注意：不跳过已有中文的句子，而是检查质量并尝试替换
-    print("\n" + "="*60)
-    print("[\u5ba1\u6838+\u4fee\u6b63] \u9010\u53e5\u8d28\u91cf\u68c0\u67e5")
+    print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
+    # 审核修正
+    print("
+" + "="*60)
+    print("[审核+修正] 逐句质量检查")
     print("="*60)
     fixed_count = 0
-    # 按顺序为每句分配中文池中的内容（避免重复分配同一句）
+    # 按顺序从中文池中分配（不重复）
     pool_cursor = 0
     for idx in range(len(pairs)):
         en_s, zh_s = pairs[idx]
-        tag, reason = "\u2705", ""
-        # 如果中文过短或为空，从池中取下一个可用子句
+        tag, reason = "✅", ""
         if not zh_s.strip() or len(zh_s.strip()) < 4:
             if pool_cursor < len(orig_zh_pool):
-                new_zh = orig_zh_pool[pool_cursor]
+                pairs[idx][1] = orig_zh_pool[pool_cursor]
+                zh_s = orig_zh_pool[pool_cursor]
                 pool_cursor += 1
-                pairs[idx][1] = new_zh
-                zh_s = new_zh
-                tag, reason = "\U0001f527", f"\u4ece\u6c60\u4e2d\u53d6\u7b2c{pool_cursor}\u53e5"
+                tag, reason = "🔧", f"池取第{pool_cursor}句"
                 fixed_count += 1
-        # 检查是否与前面的句子重复中文
-        if tag == "\u2705" and zh_s.strip():
-            # 检查前面是否有相同中文
+        if tag == "✅" and zh_s.strip():
             for j in range(idx):
-                if pairs[j][1] == zh_s:
-                    # 重复了，从池中取下一句
+                if pairs[j][1] == zh_s and pairs[j][1].strip():
                     if pool_cursor < len(orig_zh_pool):
-                        new_zh = orig_zh_pool[pool_cursor]
+                        pairs[idx][1] = orig_zh_pool[pool_cursor]
+                        zh_s = orig_zh_pool[pool_cursor]
                         pool_cursor += 1
-                        pairs[idx][1] = new_zh
-                        zh_s = new_zh
-                        tag, reason = "\U0001f527", f"\u53bb\u91cd\uff0c\u53d6\u7b2c{pool_cursor}\u53e5"
+                        tag, reason = "🔧", f"去重取第{pool_cursor}句"
                         fixed_count += 1
                     break
-        en_preview = en_s[:55].replace('\n', ' ')
-        zh_preview = zh_s[:30].replace('\n', ' ') if zh_s else "\uff08\u7a7a\uff09"
+        en_preview = en_s[:55].replace('
+', ' ')
+        zh_preview = zh_s[:30].replace('
+', ' ') if zh_s else "（空）"
         print(f"[{idx+1:02d}] {tag}  EN: {en_preview}")
         print(f"        ZH: {zh_preview}")
         if reason:
-            print(f"        \u2691  {reason}")
+            print(f"        ⚑  {reason}")
     print("="*60)
-    print(f"[\u5ba1\u6838] \u5171\u4fee\u6b63 {fixed_count} \u5904")
-    print("="*60 + "\n")
+    print(f"[审核] 共修正 {fixed_count} 处")
+    print("="*60 + "
+")
 
 # ================================================================== #
 # IMA 知识库备用（登录失败时使用）
