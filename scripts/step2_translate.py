@@ -308,9 +308,9 @@ def do_alignment_and_audit():
     amruta_sents = split_sentences(content)
     if not amruta_sents:
         return
-    # 构建IMA中文子句池（按句号切分）
+    # 构建IMA中文子句池（跳过前2对头部元信息）
     ima_zh_pool = []
-    for ep, zp in pairs:
+    for ep, zp in pairs[2:]:
         for zs in re.split(r'[。！？]', zp):
             zs = zs.strip()
             if len(zs) > 3:
@@ -325,20 +325,18 @@ def do_alignment_and_audit():
         if not aliyun_zh:
             aligned.append([sent, ''])
             continue
-        # 去首尾标点空格、保留12字以内的子句
-        aliyun_clean = re.sub(r'^[\s,，。！？、；：""''""''“”‘’]+', '', aliyun_zh)
-        aliyun_clean = re.sub(r'[\s,，。！？、；：""''""''“”‘’]+$', '', aliyun_clean)
-        aliyun_kws = set(aliyun_clean)  # 逐字作为关键词
-        # 2. 在IMA中文池中找最佳匹配
+        # 去首尾标点空格
+        aliyun_clean = re.sub(r'^[\s,，。！？、；：“”‘’]+', '', aliyun_zh)
+        aliyun_clean = re.sub(r'[\s,，。！？、；：“”‘’]+$', '', aliyun_clean)
+        # 2. 在IMA中文池中找最佳匹配（中-中匹配）
         best_sc, best_zs = 0, ''
         for zs in ima_zh_pool:
-            # 计算中文字符重叠率（取阿里云翻译和IMA子句的公共中文字符数）
-            common_cn = sum(1 for c in aliyun_clean if '\u4e00' <= c <= '\u9fff' and c in zs)
+            common_cn = sum(1 for c in aliyun_clean if '一' <= c <= '鿿' and c in zs)
             if common_cn > best_sc:
                 best_sc, best_zs = common_cn, zs
-        # 3. 如果匹配度够高，用IMA的；否则用阿里云的
-        match_ratio = best_sc / max(len(aliyun_clean), 1)
-        if best_sc >= 3 and match_ratio >= 0.15:
+        # 3. 匹配阈值：至少8个中文字符重叠，且覆盖阿里云翻译40%以上
+        match_ratio = best_sc / max(len(aliyun_clean), 1) if len(aliyun_clean) > 0 else 0
+        if best_sc >= 8 and match_ratio >= 0.4:
             final_zh = best_zs
         else:
             final_zh = aliyun_clean
