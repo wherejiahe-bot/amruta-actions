@@ -347,7 +347,7 @@ def do_alignment_and_audit():
             if len(sent) >= look_len:
                 search_key = sent[:look_len]
                 # 跳过前导空格和特殊字符
-                search_key = re.sub(r'^[\[\]\s“”‘’.?!,\-;:"'–]+', '', search_key)
+                search_key = re.sub(r"^[\[\]\s\"'.?!,\-;:]+", '', search_key)
                 if len(search_key) >= look_len - 5:
                     pos = all_en.find(search_key, max(prev_end - 20, 0))
                     if pos >= 0:
@@ -400,8 +400,7 @@ def do_alignment_and_audit():
     cn_count = sum(1 for _, zh in pairs if zh.strip())
     print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
     # 审核修正
-    print("
-" + "="*60)
+    print("\n" + "="*60)
     print("[审核+修正] 逐句质量检查")
     print("="*60)
     fixed_count = 0
@@ -427,18 +426,15 @@ def do_alignment_and_audit():
                         tag, reason = "🔧", f"去重取第{pool_cursor}句"
                         fixed_count += 1
                     break
-        en_preview = en_s[:55].replace('
-', ' ')
-        zh_preview = zh_s[:30].replace('
-', ' ') if zh_s else "（空）"
+        en_preview = en_s[:55].replace('\n', ' ')
+        zh_preview = zh_s[:30].replace('\n', ' ') if zh_s else "（空）"
         print(f"[{idx+1:02d}] {tag}  EN: {en_preview}")
         print(f"        ZH: {zh_preview}")
         if reason:
             print(f"        ⚑  {reason}")
     print("="*60)
     print(f"[审核] 共修正 {fixed_count} 处")
-    print("="*60 + "
-")
+    print("="*60 + "\n")
 
 # ================================================================== #
 # IMA 知识库备用（登录失败时使用）
@@ -631,13 +627,10 @@ for en, zh in pairs:
         continue
     if en and zh:
         pair_html_lines.append(
-            f'<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">{en}</p>'
-            f'<p style="margin:0 0 14px 0;">{zh}</p>'
-        )
+            f'<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">{en}</p>'            f'<p style="margin:0 0 14px 0;">{zh}</p>'        )
     elif en:
         pair_html_lines.append(
-            f'<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">{en}</p>'
-        )
+            f'<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">{en}</p>'        )
     elif zh:
         pair_html_lines.append(f'<p style="margin:0 0 14px 0;">{zh}</p>')
 
