@@ -673,12 +673,29 @@ def do_alignment_and_audit():
         if cursor >= len(zh_pool):
             aligned.append([sent, ''])
             continue
-        # 初始过滤：如果第一个子句相似度<0.25，顺延到下一个
+        # 初始过滤：跳过问句、过短(<8字)、语义不匹配的子句
         while cursor < len(zh_pool):
-            first_sim = _calc_similarity(sent, zh_pool[cursor])
-            if first_sim >= 0.25:
-                break
-            cursor += 1
+            zs = zh_pool[cursor]
+            # 规则过滤：以"呢""吗"结尾的问句直接跳过
+            if len(zs) < 8 or re.search(r'[呢吗]$', zs):
+                cursor += 1
+                continue
+            # 关键词过滤：用EN_ZH_DICT检查英文核心词是否在中文中出现
+            en_kw = [w.strip('.,!?"\'-()').lower() for w in sent.split() if len(w.strip('.,!?"\'-()')) > 2]
+            dict_hits = 0
+            for kw in en_kw:
+                if kw in EN_ZH_DICT and EN_ZH_DICT[kw] in zs:
+                    dict_hits += 1
+            # 如果英文句有>=3个可查的关键词但全部未命中中文，跳过
+            if dict_hits == 0 and len([k for k in en_kw if k in EN_ZH_DICT]) >= 2:
+                cursor += 1
+                continue
+            # 语义过滤：相似度<0.4则跳过
+            sim = _calc_similarity(sent, zs)
+            if sim < 0.4:
+                cursor += 1
+                continue
+            break
         if cursor >= len(zh_pool):
             aligned.append([sent, ''])
             continue
