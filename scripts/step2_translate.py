@@ -2866,7 +2866,7 @@ def search_ima_kb(query_text, phase_name):
 
 
 
-    query = json.dumps({"query": safe_query, "kb_id": "XbbHhqibvE1vxMvwq4uzEF3dyxcQhSgOBCdi9gIAWWI=", "page_num": 1, "page_size": 10})
+    query = json.dumps({"query": safe_query, "knowledge_base_id": "sEgPPEWFuYNq58qNKa6FunW0CAU7wv7JwMEXCUJwaVY=", "page_num": 1, "page_size": 10})
 
 
 
