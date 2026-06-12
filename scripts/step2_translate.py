@@ -617,7 +617,7 @@ except:
     _bg = None
 
 def do_alignment_and_audit():
-    """BGE找头+顺序贴（中文全部来自IMA）"""
+    """BGE每句英-中匹配 IMA优先，阿里云兜底"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents: return
@@ -637,32 +637,38 @@ def do_alignment_and_audit():
     if last_pi < first_pi: last_pi = first_pi
     for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
         if pairs[pi][1].strip(): last_pi = pi
-    print(f"[translate] 锚定[{first_pi}~{last_pi}]")
+    print(f"[translate] 锚定[{first_pi}~{last_pi}]"）
     zh_pool = []
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
         for zs in re.split(r"[。！？，]", pairs[pi][1]):
             zs = zs.strip()
             if len(zs) >= 4: zh_pool.append(zs)
     if not zh_pool: pairs = [[s,""] for s in amruta_sents]; return
-    # BGE找头 + 顺序贴
-    head = 0
+    # BGE英-中匹配：每句英文找最佳IMA中文子句
     if _bg is not None:
-        first_aliyun = aliyun_translate_title(amruta_sents[0])
-        if first_aliyun:
-            av = _bg.encode([first_aliyun], normalize_embeddings=True, show_progress_bar=False)[0]
-            zv = _bg.encode(zh_pool, normalize_embeddings=True, show_progress_bar=False)
-            best_sc, head = -1, 0
-            for pi, v in enumerate(zv):
-                sc = float(np.dot(av, v))
-                if sc > best_sc: best_sc, head = sc, pi
-            print(f"[translate] BGE头位置: zh_pool[{head}] = {zh_pool[head][:20]}")
-    # 从头开始按顺序分配（中文全部来自IMA）
+        en_vecs = _bg.encode(amruta_sents, normalize_embeddings=True, show_progress_bar=False)
+        zh_vecs = _bg.encode(zh_pool, normalize_embeddings=True, show_progress_bar=False)
+        sim_matrix = np.dot(en_vecs, zh_vecs.T)
+    used = set()
     aligned = []
     for i, sent in enumerate(amruta_sents):
-        zi = head + i
-        if zi < len(zh_pool):
-            aligned.append([sent, zh_pool[zi]])
-        else: aligned.append([sent, ""])
+        # 阿里云翻译（兜底）
+        aliyun_zh = aliyun_translate_title(sent)
+        # BGE找未使用的最佳IMA子句
+        if _bg is not None:
+            best_sc, best_zs, best_pi = -1, "", -1
+            for pi in range(len(zh_pool)):
+                if pi in used: continue
+                sc = float(sim_matrix[i][pi])
+                if sc > best_sc: best_sc, best_zs, best_pi = sc, zh_pool[pi], pi
+            # 阈值判断：>=0.4用IMA，<0.4用阿里云
+            if best_pi >= 0 and best_sc >= 0.4:
+                aligned.append([sent, best_zs])
+                used.add(best_pi)
+            else:
+                aligned.append([sent, aliyun_zh or ""])
+        else:
+            aligned.append([sent, aliyun_zh or ""])
     pairs = [list(p) for p in aligned]
     # 后处理：修正翻译错误
     for idx in range(len(pairs)):
@@ -698,6 +704,11 @@ if not pairs:
     pairs = [[p, ""] for p in paras]
     print(f"[translate_article] No Chinese, EN only: {len(pairs)} paras")
 
+# ============ 标题翻译 + D Link ============ #
+if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
+    t = aliyun_translate_title(title_en)
+    if t: title_cn = t
+final_link = sahaja_link or link
 # ============ HTML ============ #
 lines = []
 for en, zh in pairs:
