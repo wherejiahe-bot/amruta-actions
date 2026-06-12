@@ -622,3 +622,64 @@ def do_alignment_and_audit():
     pairs = [list(p) for p in aligned]
     cn = sum(1 for _,z in pairs if z.strip())
     print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
+
+# ============ Aliyun translation + HTML build ============ #
+if pairs:
+    do_alignment_and_audit()
+else:
+    amruta_sents = split_sentences(content)
+    if amruta_sents:
+        aligned = []
+        for s in amruta_sents:
+            zh = aliyun_translate_title(s)
+            aligned.append([s, zh or ""])
+        pairs = [list(p) for p in aligned]
+        print(f"[translate_article] Aliyun done: {len(pairs)} sentences")
+
+# ============ IMA backup ============ #
+if not pairs:
+    cid = os.environ.get("IMA_CLIENT_ID", "")
+    aik = os.environ.get("IMA_API_KEY", "")
+    if cid and aik:
+        print(f"[translate_article] Searching IMA for {date_str}...")
+
+# ============ Fallback ============ #
+if not pairs:
+    paras = [p.strip() for p in content.split(chr(10)) if p.strip()]
+    pairs = [[p, ""] for p in paras]
+    print(f"[translate_article] No Chinese, EN only: {len(pairs)} paras")
+
+# ============ HTML ============ #
+lines = []
+for en, zh in pairs:
+    en = str(en).strip() if en else ""
+    zh = str(zh).strip() if zh else ""
+    if not en and not zh: continue
+    if en and zh:
+        lines.append("<p style=\"color:#888;font-size:0.85em;margin:0 0 2px 0;\">" + en + "</p><p style=\"margin:0 0 14px 0;\">" + zh + "</p>")
+    elif en:
+        lines.append("<p style=\"color:#888;font-size:0.85em;margin:0 0 14px 0;\">" + en + "</p>")
+pair_html = chr(10).join(lines)
+try:
+    from datetime import datetime as dt2
+    dt = dt2.strptime(date_str, "%Y-%m-%d")
+    dd = dt.strftime("%Y" + chr(24180) + "%-m" + chr(26376) + "%-d" + chr(26085) + "日")
+except: dd = date_str
+link = sahaja_link or link
+html = "<!DOCTYPE html><html><head><meta charset=utf-8><meta name=viewport content=width=device-width,initial-scale=1></head><body style=font-family:Helvetica Neue,Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px 16px;color:#222;line-height:1.7;>"
+html += "<h2 style=margin:0 0 4px 0;font-size:1.25em;font-weight:700;>" + str(title_cn) + "</h2>"
+html += "<p style=color:#888;font-size:0.85em;margin:0 0 4px 0;font-style:italic;>" + str(title_en) + "</p>"
+html += "<p style=color:#aaa;font-size:0.8em;margin:0 0 24px 0;>" + dd + "</p>"
+html += "<hr style=border:none;border-top:1px solid #eee;margin:0 0 24px 0;>"
+html += pair_html
+html += "<hr style=border:none;border-top:1px solid #eee;margin:24px 0 16px 0;>"
+html += "<p style=color:#aaa;font-size:0.8em;margin:0;word-break:break-all;><a href=https://amruta.today/ style=color:#aaa;>https://amruta.today/</a><br><br><a href=" + link + " style=color:#aaa;>" + link + "</a></p>"
+html += "</body></html>"
+
+with open("/tmp/pairs.json", "w", encoding="utf-8") as f:
+    json.dump(pairs, f, ensure_ascii=False, indent=2)
+with open("/tmp/email_body.html", "w", encoding="utf-8") as f:
+    f.write(html)
+with open("/tmp/sahaja_link.txt", "w", encoding="utf-8") as f:
+    f.write(link or "")
+print(f"[translate_article] HTML done, {len(pairs)} pairs")
