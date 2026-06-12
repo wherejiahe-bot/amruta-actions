@@ -341,30 +341,83 @@ def do_alignment_and_audit():
     if last_pi < first_pi:
         last_pi = first_pi
 
-    # 比例切割对齐：按 amruta 句子长度在中文总串中按比例切分
-    all_zh = "".join(pairs[pi][1] for pi in range(first_pi, last_pi + 1))
-    total_en_len = max(sum(len(s) for s in amruta_sents), 1)
-    zh_cursor = 0
+# 逐句锚定+合并：对每个 amruta 句子在 IMA pairs 中找到最佳段落
+    # 先构建中文子句池（从原始 IMA pairs）
+    orig_zh_pool = []
+    for pi in range(first_pi, last_pi + 1):
+        zp = pairs[pi][1]
+        for zs in re.split(r'[。！？]', zp):
+            zs = zs.strip()
+            if len(zs) > 3:
+                orig_zh_pool.append(zs)
+
+    amruta_to_para = []
+    for en_sent in amruta_sents:
+        pi = best_para_for_sent(en_sent, pairs[first_pi:last_pi+1])
+        amruta_to_para.append(first_pi + pi)
+
+    from collections import defaultdict
+    para_to_amruta = defaultdict(list)
+    for order, pi in enumerate(amruta_to_para):
+        para_to_amruta[pi].append(order)
+
+    result_map = {}
+    for pi in range(first_pi, last_pi + 1):
+        if pi not in para_to_amruta:
+            continue
+        orders = para_to_amruta[pi]
+        zp = pairs[pi][1]
+        zh_subs = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) > 3]
+        if not zh_subs:
+            for order in orders:
+                result_map[order] = ""
+            continue
+
+        zh_claimed = {}
+        anchored = {}
+        for order in orders:
+            en_s = amruta_sents[order]
+            zh_kws = en_sent_to_zh_keywords(en_s)
+            if not zh_kws:
+                continue
+            best_sc, best_zi = 0, -1
+            for zi, zs in enumerate(zh_subs):
+                if zi in zh_claimed:
+                    continue
+                sc = sum(1 for kw in zh_kws if kw in zs)
+                if sc > best_sc:
+                    best_sc, best_zi = sc, zi
+            if best_sc >= 1 and best_zi >= 0:
+                anchored[order] = best_zi
+                zh_claimed[best_zi] = order
+
+        # 未锚定句子按顺序取剩余子句
+        remaining = [zi for zi in range(len(zh_subs)) if zi not in zh_claimed]
+        ri = 0
+        for order in orders:
+            if order not in anchored:
+                if ri < len(remaining):
+                    anchored[order] = remaining[ri]
+                    zh_claimed[remaining[ri]] = order
+                    ri += 1
+                else:
+                    anchored[order] = len(zh_subs) - 1
+
+        order_by_zi = sorted(anchored.items(), key=lambda x: x[1])
+        for rank, (order, zi) in enumerate(order_by_zi):
+            next_zi = order_by_zi[rank + 1][1] if rank + 1 < len(order_by_zi) else len(zh_subs)
+            group = [zh_subs[zi]]
+            for k in range(zi + 1, next_zi):
+                if k not in zh_claimed or zh_claimed[k] == order:
+                    group.append(zh_subs[k])
+            result_map[order] = "".join(group)
+
     aligned = []
-    for i, sent in enumerate(amruta_sents):
-        ratio = len(sent) / total_en_len
-        chunk_len = max(int(ratio * len(all_zh)), 1)
-        if i == len(amruta_sents) - 1:
-            zh_chunk = all_zh[zh_cursor:]
-        else:
-            zh_chunk = all_zh[zh_cursor:zh_cursor + chunk_len]
-            zh_cursor += chunk_len
-            if zh_cursor < len(all_zh):
-                best_pos = len(all_zh)
-                for p in '。！？':
-                    pos = all_zh.find(p, max(zh_cursor - 2, 0))
-                    if 0 <= pos + 1 < best_pos:
-                        best_pos = pos + 1
-                if best_pos < len(all_zh) and best_pos - zh_cursor < 8:
-                    zh_chunk = all_zh[zh_cursor - chunk_len:best_pos]
-                    zh_cursor = best_pos
-        aligned.append([sent, zh_chunk.strip()])
-    print(f"[translate_article] 锚定段落 [{first_pi}~{last_pi}]，比例对齐: {len(aligned)} 句")
+    for order, en_sent in enumerate(amruta_sents):
+        aligned.append([en_sent, result_map.get(order, "")])
+
+    print(f"[translate_article] 锚定段落 [{first_pi}~{last_pi}]，段落分组: {dict(para_to_amruta)}")
+
     pairs = aligned
     cn_count = sum(1 for _, zh in pairs if zh.strip())
     print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
