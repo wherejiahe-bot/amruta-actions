@@ -2922,7 +2922,7 @@ def search_ima_kb(query_text, phase_name):
 
 
 
-            media_req = urllib.request.Request(f"https://ima.qq.com/openapi/wiki/v1/get_media_info?kb_file_id={file_id}", headers=ima_headers)
+            media_req = urllib.request.Request(f"https://ima.qq.com/openapi/wiki/v1/get_media_info?media_id={file_id}", headers=ima_headers)
 
 
 
