@@ -673,11 +673,19 @@ def do_alignment_and_audit():
         if cursor >= len(zh_pool):
             aligned.append([sent, ''])
             continue
-        # 至少取1句
+        # 初始过滤：如果第一个子句相似度<0.25，顺延到下一个
+        while cursor < len(zh_pool):
+            first_sim = _calc_similarity(sent, zh_pool[cursor])
+            if first_sim >= 0.25:
+                break
+            cursor += 1
+        if cursor >= len(zh_pool):
+            aligned.append([sent, ''])
+            continue
         merged = zh_pool[cursor]
         best_sim = _calc_similarity(sent, merged)
         cursor += 1
-        # 尝试取更多：如果加下一句相似度更高，就继续加
+        # 贪婪合并：如果加下一句相似度更高，就继续加
         while cursor < len(zh_pool):
             trial = merged + zh_pool[cursor]
             trial_sim = _calc_similarity(sent, trial)
@@ -690,7 +698,9 @@ def do_alignment_and_audit():
         aligned.append([sent, merged])
     pairs = aligned
     cn_count = sum(1 for _, zh in pairs if zh.strip())
-    print(f"[translate_article] 锚定[{first_pi}~{last_pi}]，贪婪匹配: {len(pairs)}句，{cn_count}句有中文")# ================================================================== #
+    print(f"[translate_article] 锚定[{first_pi}~{last_pi}]，贪婪匹配: {len(pairs)}句，{cn_count}句有中文")
+
+# ================================================================== #
 
 # IMA 知识库备用（登录失败时使用）
 
