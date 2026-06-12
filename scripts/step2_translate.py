@@ -2871,7 +2871,7 @@ def search_ima_kb(query_text, phase_name):
             return False
         md_req = urllib.request.Request(dl_url, headers=dl_hdrs)
         zh_text = urllib.request.urlopen(md_req, timeout=30).read().decode("utf-8").replace(chr(13)+chr(10), chr(10))
-        sahaja_link = dl_url
+        # sahaja_link = dl_url  # COS URL, not user-facing
         if zh_text.strip():
             # Split Chinese text into sentence pairs for BGE alignment
             zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
