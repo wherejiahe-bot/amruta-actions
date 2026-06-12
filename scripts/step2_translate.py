@@ -682,7 +682,7 @@ if not pairs:
     if cid and aik:
         print(f"[translate_article] Searching IMA KB for {date_str}...")
         ima_headers = {"ima-openapi-clientid": cid, "ima-openapi-apikey": aik, "Content-Type": "application/json"}
-        query = '{"query":"' + title_en.replace(chr(34), ' ') + ' ' + content[:80].replace(chr(34), ' ') + '","kb_id":"XbbHhqibvE1vxMvwq4uzEF3dyxcQhSgOBCdi9gIAWWI=","page_num":1,"page_size":10}''
+        query = '{"query":"' + title_en.replace("'", '')[:60] + ' ' + content[:60].replace("'", '') + '","kb_id":"XbbHhqibvE1vxMvwq4uzEF3dyxcQhSgOBCdi9gIAWWI=","page_num":1,"page_size":10}'
         req_ima = urllib.request.Request("https://ima.qq.com/openapi/wiki/v1/search_knowledge", data=query.encode(), headers=ima_headers, method='POST')
         try:
             resp_ima = urllib.request.urlopen(req_ima, timeout=15)
