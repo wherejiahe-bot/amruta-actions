@@ -705,15 +705,18 @@ def do_alignment_and_audit():
         best_sim = _calc_similarity(sent, merged)
         print(f"  [{i+1}] 初始子句{cursor+1}: sim={best_sim:.3f} | {merged[:20]}")
         cursor += 1
-        while cursor < len(zh_pool):
-            trial = merged + zh_pool[cursor]
+        merge_count = 0
+        while cursor < len(zh_pool) and merge_count < 2:
+            trial = merged + "，" + zh_pool[cursor]
             trial_sim = _calc_similarity(sent, trial)
-            print(f"      加子句{cursor+1}: sim={trial_sim:.3f}({'↑' if trial_sim>best_sim else '↓'}) | +{zh_pool[cursor][:15]}")
             if trial_sim > best_sim:
                 merged = trial
                 best_sim = trial_sim
                 cursor += 1
+                merge_count += 1
+                print(f"      合并子句{cursor}: sim={best_sim:.3f} | +{zh_pool[cursor-1][:15]}")
             else:
+                print(f"      跳过子句{cursor+1}: sim↓ | {zh_pool[cursor][:15]}")
                 break
         aligned.append([sent, merged])
     pairs = aligned
