@@ -654,9 +654,28 @@ def do_alignment_and_audit():
     last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
     if last_pi < first_pi: last_pi = first_pi
     if first_pi < 2: first_pi = 2
+    # 用语义模型扩展 last_pi：往后检查每个段落是否与amruta末句相关
+    last_sent = amruta_sents[-1]
+    expand_pi = last_pi
+    skip_count = 0
+    for pi in range(last_pi + 1, min(last_pi + 30, len(pairs))):
+        zp = pairs[pi][1]
+        if not zp.strip():
+            skip_count += 1
+            if skip_count >= 3: break
+            continue
+        sim = _calc_similarity(last_sent, zp)
+        if sim >= 0.3:
+            expand_pi = pi
+            skip_count = 0
+        else:
+            skip_count += 1
+            if skip_count >= 3: break
+    last_pi = expand_pi
+    print(f"[translate_article] 锚定范围语义扩展: [{first_pi}~{last_pi}]")
     # 从锚定范围切中文子句
     zh_pool = []
-    for pi in range(first_pi, min(last_pi + 12, len(pairs))):
+    for pi in range(first_pi, min(last_pi + 1, len(pairs))):
         for zs in re.split(r'[\u3002\uff01\uff1f\uff0c]', pairs[pi][1]):
             zs = zs.strip()
             if len(zs) >= 4:
