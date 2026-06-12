@@ -693,48 +693,35 @@ def do_alignment_and_audit():
         if cursor >= len(zh_pool):
             aligned.append([sent, ''])
             continue
-        # 初始过滤：跳过问句、过短(<8字)、语义不匹配的子句
+        # 初始过滤：跳过问句、过短(<8字)、语义太低的子句
         while cursor < len(zh_pool):
             zs = zh_pool[cursor]
-            # 规则过滤：以"呢""吗"结尾的问句直接跳过
             if len(zs) < 8 or re.search(r'[呢吗]$', zs):
-                cursor += 1
-                continue
-            # 关键词过滤：用EN_ZH_DICT检查英文核心词是否在中文中出现
+                cursor += 1; continue
             en_kw = [w.strip('.,!?"\'-()').lower() for w in sent.split() if len(w.strip('.,!?"\'-()')) > 2]
-            dict_hits = 0
-            for kw in en_kw:
-                if kw in EN_ZH_DICT and EN_ZH_DICT[kw] in zs:
-                    dict_hits += 1
-            # 如果英文句有>=3个可查的关键词但全部未命中中文，跳过
+            dict_hits = sum(1 for kw in en_kw if kw in EN_ZH_DICT and EN_ZH_DICT[kw] in zs)
             if dict_hits == 0 and len([k for k in en_kw if k in EN_ZH_DICT]) >= 2:
-                cursor += 1
-                continue
-            # 语义过滤：相似度<0.4则跳过
+                cursor += 1; continue
             sim = _calc_similarity(sent, zs)
-            if sim < 0.4:
-                cursor += 1
-                continue
+            if sim < 0.3:
+                cursor += 1; continue
             break
         if cursor >= len(zh_pool):
-            aligned.append([sent, ''])
-            continue
-        # 贪婪合并：加子句后用整句比较，相似度提高则继续合并
+            aligned.append([sent, '']); continue
+        # 双模型对比：子句与当前句和下一句比，决定归属
         merged = zh_pool[cursor]
-        best_sim = _calc_similarity(sent, merged)
-        print(f"  [{i+1}] 初始子句{cursor+1}: sim={best_sim:.3f} | {merged[:20]}")
         cursor += 1
+        print(f"  [{i+1}] 初始子句{cursor}: sim=?.??? | {merged[:20]}")
         while cursor < len(zh_pool):
-            trial = merged + "，" + zh_pool[cursor]
-            trial_sim = _calc_similarity(sent, trial)
-            if trial_sim > best_sim:
-                merged = trial
-                best_sim = trial_sim
-                cursor += 1
-                print(f"      合并子句{cursor}: sim={best_sim:.3f} | +{zh_pool[cursor-1][:15]}")
-            else:
-                print(f"      跳过子句{cursor+1}: sim↓ | {zh_pool[cursor][:15]}")
-                break
+            zs = zh_pool[cursor]
+            sim_cur = _calc_similarity(sent, zs)
+            if i < len(amruta_sents) - 1:
+                sim_nxt = _calc_similarity(amruta_sents[i+1], zs)
+                if sim_cur < sim_nxt:
+                    print(f"      子句{cursor+1}: sim_cur={sim_cur:.3f} < sim_nxt={sim_nxt:.3f} → 留到下一句")
+                    break
+            merged = merged + "，" + zs
+            cursor += 1
         aligned.append([sent, merged])
     pairs = aligned
     cn_count = sum(1 for _, zh in pairs if zh.strip())
