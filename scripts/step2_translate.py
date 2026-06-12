@@ -688,12 +688,43 @@ else:
         pairs = [list(p) for p in aligned]
         print(f"[translate_article] Aliyun done: {len(pairs)} sentences")
 
-# ============ IMA backup ============ #
+# ============ IMA KB Search ============ #
 if not pairs:
     cid = os.environ.get("IMA_CLIENT_ID", "")
     aik = os.environ.get("IMA_API_KEY", "")
     if cid and aik:
-        print(f"[translate_article] Searching IMA for {date_str}...")
+        print(f"[translate_article] Searching IMA KB for {date_str}...")
+        ima_headers = {"ima-openapi-clientid": cid, "ima-openapi-apikey": aik, "Content-Type": "application/json"}
+        query = '{"query":"' + date_str + '","kb_id":"XbbHhqibvE1vxMvwq4uzEF3dyxcQhSgOBCdi9gIAWWI=","page_num":1,"page_size":10}'
+        req_ima = urllib.request.Request("https://ima.qq.com/openapi/wiki/v1/search_knowledge", data=query.encode(), headers=ima_headers, method='POST')
+        try:
+            resp_ima = urllib.request.urlopen(req_ima, timeout=15)
+            ima_result = json.loads(resp_ima.read())
+            docs = ima_result.get("data", {}).get("documents", [])
+            for doc in docs:
+                file_id = doc.get("kb_file_id", "")
+                if file_id:
+                    media_req = urllib.request.Request(f"https://ima.qq.com/openapi/wiki/v1/get_media_info?kb_file_id={file_id}", headers=ima_headers)
+                    media_resp = urllib.request.urlopen(media_req, timeout=15)
+                    media_data = json.loads(media_resp.read())
+                    url = media_data.get("data", {}).get("url", "")
+                    dl_headers_raw = media_data.get("data", {}).get("headers", {})
+                    if url:
+                        dl_req = urllib.request.Request(url, headers=dl_headers_raw)
+                        dl_resp = urllib.request.urlopen(dl_req, timeout=30)
+                        md_text = dl_resp.read().decode("utf-8").replace('\r\n', '\n')
+                        sahaja_link = url
+                        pairs1 = parse_sahaja_full_text(md_text)
+                        pairs2 = parse_merged_text(md_text)
+                        parsed = pairs1 if len(pairs1) > len(pairs2) else pairs2
+                        if parsed:
+                            pairs = parsed
+                            tc = extract_title_cn_from_pairs(pairs, title_en)
+                            if tc: title_cn = tc
+                            print(f"[translate_article] IMA KB found: {len(pairs)} pairs")
+                            break
+        except Exception as e:
+            print(f"[translate_article] IMA KB search failed: {e}")
 
 # ============ Fallback ============ #
 if not pairs:
