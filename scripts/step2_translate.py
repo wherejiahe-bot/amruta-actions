@@ -702,10 +702,12 @@ def do_alignment_and_audit():
         # 贪婪合并：加子句后用整句比较，相似度提高则继续合并
         merged = zh_pool[cursor]
         best_sim = _calc_similarity(sent, merged)
+        print(f"  [{i+1}] 初始子句{cursor+1}: sim={best_sim:.3f} | {merged[:20]}")
         cursor += 1
         while cursor < len(zh_pool):
             trial = merged + zh_pool[cursor]
             trial_sim = _calc_similarity(sent, trial)
+            print(f"      加子句{cursor+1}: sim={trial_sim:.3f}({'↑' if trial_sim>best_sim else '↓'}) | +{zh_pool[cursor][:15]}")
             if trial_sim > best_sim:
                 merged = trial
                 best_sim = trial_sim
