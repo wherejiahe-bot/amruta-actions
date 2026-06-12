@@ -617,7 +617,7 @@ except:
     _bg = None
 
 def do_alignment_and_audit():
-    """BGE每句英-中匹配 IMA优先，阿里云兜底"""
+    """BGE整段中文匹配，不切子句"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents: return
@@ -638,39 +638,36 @@ def do_alignment_and_audit():
     for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
         if pairs[pi][1].strip(): last_pi = pi
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
-    zh_pool = []
+    # 直接用整段中文（不切子句)，跳过空段
+    zh_paras = []
+    para_indices = []
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
-        for zs in re.split(r"[。！？，]", pairs[pi][1]):
-            zs = zs.strip()
-            if len(zs) >= 4: zh_pool.append(zs)
-    if not zh_pool: pairs = [[s,""] for s in amruta_sents]; return
-    # BGE英-中匹配：每句英文找最佳IMA中文子句
-    if _bg is not None:
-        en_vecs = _bg.encode(amruta_sents, normalize_embeddings=True, show_progress_bar=False)
-        zh_vecs = _bg.encode(zh_pool, normalize_embeddings=True, show_progress_bar=False)
-        sim_matrix = np.dot(en_vecs, zh_vecs.T)
+        zp = pairs[pi][1].strip()
+        if len(zp) >= 4:
+            zh_paras.append(zp)
+            para_indices.append(pi)
+    if not zh_paras: pairs = [[s,""] for s in amruta_sents]; return
+    # BGE英-中匹配：每句英文找最佳IMA整段
     used = set()
     aligned = []
+    if _bg is not None:
+        en_vecs = _bg.encode(amruta_sents, normalize_embeddings=True, show_progress_bar=False)
+        zh_vecs = _bg.encode(zh_paras, normalize_embeddings=True, show_progress_bar=False)
     for i, sent in enumerate(amruta_sents):
-        # 阿里云翻译（兜底)
         aliyun_zh = aliyun_translate_title(sent)
-        # BGE找未使用的最佳IMA子句
         if _bg is not None:
-            best_sc, best_zs, best_pi = -1, "", -1
-            for pi in range(len(zh_pool)):
+            best_sc, best_zp, best_pi = -1, "", -1
+            for pi in range(len(zh_paras)):
                 if pi in used: continue
-                sc = float(sim_matrix[i][pi])
-                if sc > best_sc: best_sc, best_zs, best_pi = sc, zh_pool[pi], pi
-            # 阈值判断：>=0.4用IMA，<0.4用阿里云
+                sc = float(np.dot(en_vecs[i], zh_vecs[pi]))
+                if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_paras[pi], pi
             if best_pi >= 0 and best_sc >= 0.4:
-                aligned.append([sent, best_zs])
+                aligned.append([sent, best_zp])
                 used.add(best_pi)
-            else:
-                aligned.append([sent, aliyun_zh or ""])
-        else:
-            aligned.append([sent, aliyun_zh or ""])
+            else: aligned.append([sent, aliyun_zh or ""])
+        else: aligned.append([sent, aliyun_zh or ""])
     pairs = [list(p) for p in aligned]
-    # 后处理：修正翻译错误
+    # 后处理
     for idx in range(len(pairs)):
         zh = pairs[idx][1]
         zh = zh.replace("左翼还是右翼", "偏左或偏右")
