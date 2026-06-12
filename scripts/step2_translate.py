@@ -609,8 +609,8 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "")
-QWEN_MODEL = "Qwen/Qwen2.5-7B-Instruct"
-QWEN_URL = "https://api.siliconflow.cn/v1/chat/completions"
+QWEN_MODEL = "deepseek-chat"
+QWEN_URL = "https://api.deepseek.com/v1/chat/completions"
 
 def qwen_align(en_sents, zh_pool):
     """用Qwen做中文子句分配"""
