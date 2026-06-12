@@ -19,9 +19,6 @@ Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp
 import json, re, os, urllib.request, urllib.parse, hashlib, hmac, base64, time, uuid
 import warnings
 warnings.filterwarnings("ignore")
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from scipy.optimize import linear_sum_assignment
 from datetime import datetime
 
 
@@ -611,47 +608,17 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
-# 跨语言语义模型
-try:
-    _align_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-except:
-    _align_model = None
 
 def do_alignment_and_audit():
-    """简版：IMA中文子句按顺序贴"""
+    """阿里云翻译：直接翻译每句英文"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents: return
-    stopwords = {"that","this","with","have","your","from","they","them","will","what","when","into","been","were","also","just","more","than","then","there","their","which","still","only","such","very","even","does","dont","cant","wont","should"}
-    def best_para_for_sent(en_s, lst):
-        kws = set(re.findall(r"[a-z]{4,}", en_s.lower())) - stopwords
-        best_sc, best_pi = 0, 0
-        for pi, (ep, zp) in enumerate(lst):
-            if not zp.strip(): continue
-            epw = set(re.findall(r"[a-z]{4,}", ep.lower())) - stopwords
-            if not epw: continue
-            sc = len(kws & epw) / max(len(kws), 1) if kws else 0
-            if sc > best_sc: best_sc, best_pi = sc, pi
-        return best_pi
-    first_pi = max(best_para_for_sent(amruta_sents[0], pairs), 2)
-    last_pi = best_para_for_sent(amruta_sents[-1], pairs)
-    if last_pi < first_pi: last_pi = first_pi
-    for pi in range(last_pi+1, min(last_pi+10, len(pairs))):
-        if pairs[pi][1].strip(): last_pi = pi
-    print(f"[translate] 锚定[{first_pi}~{last_pi}]")
-    zh_pool = []
-    for pi in range(first_pi, min(last_pi+1, len(pairs))):
-        for zs in re.split(r"[。！？，]", pairs[pi][1]):
-            zs = zs.strip()
-            if len(zs) >= 2: zh_pool.append(zs)
-    if not zh_pool: pairs = [[s,""] for s in amruta_sents]; return
-    # 按顺序贴
+    print(f"[translate] 阿里云翻译 {len(amruta_sents)} 句")
     aligned = []
     for i, sent in enumerate(amruta_sents):
-        if i < len(zh_pool):
-            aligned.append([sent, zh_pool[i]])
-        else:
-            aligned.append([sent, ""])
+        zh = aliyun_translate_title(sent)
+        aligned.append([sent, zh or ""])
     pairs = [list(p) for p in aligned]
     cn = sum(1 for _,z in pairs if z.strip())
     print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
