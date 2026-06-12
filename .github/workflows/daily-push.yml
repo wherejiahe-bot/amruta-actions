@@ -23,7 +23,7 @@ jobs:
           path: ~/.cache/huggingface/
           key: align-models-v1
       - name: Install alignment deps
-        run: pip install sentence-transformers scipy numpy
+        run: pip install sentence-transformers numpy
 
       - name: Step2 - Search + Translate
         env:
