@@ -316,12 +316,22 @@ def do_alignment_and_audit():
 
     def best_para_for_sent(en_s, sahaja_pairs_list):
         kws = set(re.findall(r'\b[a-z]{4,}\b', en_s.lower())) - stopwords
+        kws_list = sorted(kws)
+        bigrams = set()
+        for i in range(len(kws_list) - 1):
+            bigrams.add(kws_list[i] + ' ' + kws_list[i+1])
         best_sc, best_pi = 0, 0
         for pi, (ep, zp) in enumerate(sahaja_pairs_list):
             if not zp.strip(): continue
             ep_words = set(re.findall(r'\b[a-z]{4,}\b', ep.lower())) - stopwords
             if not ep_words: continue
-            sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
+            single_sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
+            ep_list = sorted(ep_words)
+            ep_bigrams = set()
+            for i2 in range(len(ep_list) - 1):
+                ep_bigrams.add(ep_list[i2] + ' ' + ep_list[i2+1])
+            bigram_sc = len(bigrams & ep_bigrams) / max(len(bigrams), 1) if bigrams else 0
+            sc = single_sc * 0.35 + bigram_sc * 0.65
             if sc > best_sc:
                 best_sc, best_pi = sc, pi
         return best_pi
@@ -370,6 +380,26 @@ def do_alignment_and_audit():
             if best_sc >= 1 and best_zi >= 0:
                 anchored[order]       = best_zi
                 zh_claimed[best_zi]   = order
+
+        # 宽松匹配：对未锚定的 order，用英文所有实词在中文子句中搜索
+        for order in orders:
+            if order in anchored:
+                continue
+            en_s = amruta_sents[order]
+            all_kws = set(re.findall(r'\b[a-z]{3,}\b', en_s.lower())) - stopwords
+            if not all_kws:
+                continue
+            best_sc2, best_zi2 = 0, -1
+            for zi2, zs2 in enumerate(zh_subs):
+                if zi2 in zh_claimed:
+                    continue
+                # 在中文子句中搜索每个英文词（通过 EN_ZH_DICT 映射）
+                hits = sum(1 for ew in all_kws if ew in EN_ZH_DICT and EN_ZH_DICT[ew] in zs2)
+                if hits > best_sc2:
+                    best_sc2, best_zi2 = hits, zi2
+            if best_sc2 >= 1 and best_zi2 >= 0:
+                anchored[order]       = best_zi2
+                zh_claimed[best_zi2]  = order
 
         remaining = [zi for zi in range(len(zh_subs)) if zi not in zh_claimed]
         ri = 0
