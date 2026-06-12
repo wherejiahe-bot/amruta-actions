@@ -19,6 +19,9 @@ Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp
 import json, re, os, urllib.request, urllib.parse, hashlib, hmac, base64, time, uuid
 import warnings
 warnings.filterwarnings("ignore")
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from scipy.optimize import linear_sum_assignment
 from datetime import datetime
 
 
@@ -608,44 +611,31 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
-QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "")
-QWEN_MODEL = "deepseek-chat"
-QWEN_URL = "https://api.deepseek.com/v1/chat/completions"
+# 跨语言语义模型
+try:
+    _align_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+except:
+    _align_model = None
 
-def qwen_align(en_sents, zh_pool):
-    """用Qwen做中文子句分配"""
-    if not QWEN_API_KEY or not en_sents or not zh_pool:
-        return [[s, ""] for s in en_sents]
-    en_text = chr(10).join(f"[{i+1}] {s}" for i,s in enumerate(en_sents))
-    zh_text = chr(10).join(f"[{i+1}] {s}" for i,s in enumerate(zh_pool))
-    prompt = "你是一个中英文句子对齐专家。以下英文和中文子句是顺序对应的。\n"
-    prompt += "请将中文子句按顺序分配到对应的英文句子下。每个中文子句只能分配一次。\n\n"
-    prompt += "英文句子：\n" + en_text + "\n\n"
-    prompt += "中文子句（按顺序）：\n" + zh_text + "\n\n"
-    prompt += "输出JSON数组：[[1,2],[3],[4,5,6],...] 每个子数组对应一句英文的中文子句索引（从1开始）。"
-    body = json.dumps({"model":QWEN_MODEL,"messages":[{"role":"user","content":prompt}],"temperature":0.01,"max_tokens":2048})
-    req = urllib.request.Request(QWEN_URL, data=body.encode(), method="POST", headers={"Authorization":"Bearer "+QWEN_API_KEY,"Content-Type":"application/json"})
-    try:
-        resp = urllib.request.urlopen(req, timeout=60)
-        result = json.loads(resp.read().decode())
-        content = result["choices"][0]["message"]["content"]
-        print(f"[qwen] 响应长度: {len(content)} chars, 前100: {content[:100]}")
-        indices = json.loads(content.strip())
-        aligned = []
-        for i, idxs in enumerate(indices):
-            parts = [zh_pool[j-1] for j in idxs if 1 <= j <= len(zh_pool)]
-            zh = "，".join(parts)
-            en = en_sents[i] if i < len(en_sents) else ""
-            aligned.append([en, zh])
-        while len(aligned) < len(en_sents):
-            aligned.append([en_sents[len(aligned)], ""])
-        return aligned
-    except Exception as e:
-        print(f"[qwen] API error: {e}")
-        return [[s, ""] for s in en_sents]
+def _align_by_semantics(en_sents, zh_pool):
+    """匈牙利算法全局最优匹配"""
+    if not en_sents or not zh_pool or _align_model is None:
+        return [(s, '') for s in en_sents]
+    en_vecs = _align_model.encode(en_sents, show_progress_bar=False)
+    zh_vecs = _align_model.encode(zh_pool, show_progress_bar=False)
+    n_en, n_zh = len(en_sents), len(zh_pool)
+    sim = np.dot(en_vecs, zh_vecs.T)
+    if n_en <= n_zh:
+        cost = -sim[:, :n_zh]
+        row_ind, col_ind = linear_sum_assignment(cost)
+        return [(en_sents[ri], zh_pool[ci]) for ri, ci in zip(row_ind, col_ind) if ci < n_zh]
+    else:
+        cost = -sim[:n_en, :]
+        row_ind, col_ind = linear_sum_assignment(cost)
+        return [(en_sents[ri], zh_pool[ci] if ci < n_zh else '') for ri, ci in zip(row_ind, col_ind)]
 
 def do_alignment_and_audit():
-    """段落锚定+Qwen语义对齐"""
+    """段落锚定+匈牙利算法语义对齐"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents: return
@@ -660,10 +650,9 @@ def do_alignment_and_audit():
             sc = len(kws & epw) / max(len(kws), 1) if kws else 0
             if sc > best_sc: best_sc, best_pi = sc, pi
         return best_pi
-    first_pi = best_para_for_sent(amruta_sents[0], pairs)
+    first_pi = max(best_para_for_sent(amruta_sents[0], pairs), 2)
     last_pi = best_para_for_sent(amruta_sents[-1], pairs)
     if last_pi < first_pi: last_pi = first_pi
-    if first_pi < 2: first_pi = 2
     for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
         if pairs[pi][1].strip(): last_pi = pi
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
@@ -673,15 +662,12 @@ def do_alignment_and_audit():
             zs = zs.strip()
             if len(zs) >= 4: zh_pool.append(zs)
     if not zh_pool:
-        pairs = [[s,""] for s in amruta_sents]
-        return
-    print(f"[translate] Qwen对齐: {len(amruta_sents)}句EN->{len(zh_pool)}句ZH")
-    aligned = qwen_align(amruta_sents, zh_pool)
+        pairs = [[s,""] for s in amruta_sents]; return
+    print(f"[translate] 匈牙利算法: {len(amruta_sents)}句EN -> {len(zh_pool)}句ZH")
+    aligned = _align_by_semantics(amruta_sents, zh_pool)
     pairs = [list(p) for p in aligned]
     cn = sum(1 for _,z in pairs if z.strip())
-    print(f"[translate] Qwen完成: {len(pairs)}句, {cn}句有中文")
-
-# ================================================================== #
+    print(f"[translate] 对齐完成: {len(pairs)}句, {cn}句有中文")# ================================================================== #
 
 # IMA 知识库备用（登录失败时使用）
 
