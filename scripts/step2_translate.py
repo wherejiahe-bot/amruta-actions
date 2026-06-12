@@ -357,7 +357,7 @@ def do_alignment_and_audit():
             continue
         orders = para_to_amruta[pi]
         zp = pairs[pi][1]
-        zh_subs = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) > 3]
+        zh_subs = [s.strip() for s in re.split(r'[，。！？;；]', zp) if len(s.strip()) > 3]
         if not zh_subs:
             for order in orders:
                 result_map[order] = ""
@@ -419,7 +419,7 @@ def do_alignment_and_audit():
             for k in range(zi + 1, next_zi):
                 if k not in zh_claimed or zh_claimed[k] == order:
                     group.append(zh_subs[k])
-            result_map[order] = "。".join(group)
+            result_map[order] = "，".join(group)
 
     aligned = []
     for order, en_sent in enumerate(amruta_sents):
@@ -436,7 +436,7 @@ def do_alignment_and_audit():
     for pi in range(first_pi, last_pi + 1):
         if pi >= len(pairs): break
         zp = pairs[pi][1]
-        for zs in re.split(r'[。！？]', zp):
+        for zs in re.split(r'[，。！？;；]', zp):
             zs = zs.strip()
             if len(zs) > 3:
                 zh_pool.append(zs)
