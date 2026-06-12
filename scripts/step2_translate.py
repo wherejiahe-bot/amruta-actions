@@ -754,12 +754,20 @@ def search_ima_kb(query_text, phase_name):
         print(f"[translate_article] IMA KB {phase_name} failed: {e}")
         return False
 
+def first_sentence(text):
+    """提取正文第一句（按句号/问号/感叹号切分，取第一句）"""
+    s = text.strip()
+    m = re.split(r'(?<=[.!?])\s+', s)
+    first = m[0].strip() if m else s[:120]
+    return first[:120]
+
 # ============ IMA KB Two-Phase Search ============ #
 if not pairs:
-    # Phase 1: search by date + title
-    phase1_ok = search_ima_kb(f"{date_str} {title_en[:60]}", "Phase1(date+title)")
+    # Phase 1: search by first sentence of body content (用户要求)
+    phase1_query = first_sentence(content)
+    phase1_ok = search_ima_kb(phase1_query, "Phase1(body-first-sent)")
     
-    # Phase 2: if empty, search by article body content
+    # Phase 2: if empty, search by first 200 chars of body content
     if not phase1_ok:
         print(f"[translate_article] Phase1 empty, retrying with body content...")
         phase2_ok = search_ima_kb(content[:200], "Phase2(body)")
