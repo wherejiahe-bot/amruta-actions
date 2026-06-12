@@ -609,8 +609,8 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "")
-QWEN_MODEL = "Qwen/Qwen2.5-7B-Instruct"
-QWEN_URL = "https://api.siliconflow.cn/v1/chat/completions"
+QWEN_MODEL = "deepseek-chat"
+QWEN_URL = "https://api.deepseek.com/v1/chat/completions"
 
 def qwen_align(en_sents, zh_pool):
     """用Qwen做中文子句分配"""
@@ -629,6 +629,7 @@ def qwen_align(en_sents, zh_pool):
         resp = urllib.request.urlopen(req, timeout=60)
         result = json.loads(resp.read().decode())
         content = result["choices"][0]["message"]["content"]
+        print(f"[qwen] 响应长度: {len(content)} chars, 前100: {content[:100]}")
         indices = json.loads(content.strip())
         aligned = []
         for i, idxs in enumerate(indices):
