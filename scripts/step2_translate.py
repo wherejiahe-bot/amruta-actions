@@ -23,7 +23,7 @@ from datetime import datetime
 
 
 
-# 阿里云翻译函数（仅标题翻译用）
+# 阿里云翻译函数（仅标题翻译用)
 
 def aliyun_translate_title(text):
 
@@ -193,7 +193,7 @@ def parse_sahaja_full_text(full_text):
 
     def is_meta_block(b):
 
-        """判断是否为头部元信息行（日期、地点、语言说明、译注等）"""
+        """判断是否为头部元信息行（日期、地点、语言说明、译注等)"""
 
         if is_zh_block(b):
 
@@ -239,7 +239,7 @@ def parse_sahaja_full_text(full_text):
 
     i = 0
 
-    # 跳过头部元信息，找到正文起点（第一个非元信息的英文段）
+    # 跳过头部元信息，找到正文起点（第一个非元信息的英文段)
 
     while i < len(blocks):
 
@@ -285,7 +285,7 @@ def parse_sahaja_full_text(full_text):
 
 def parse_merged_text(full_text):
 
-    """解析 EN/ZH 合并在同一段落的格式（1978年早期讲话）。"""
+    """解析 EN/ZH 合并在同一段落的格式（1978年早期讲话)。"""
 
     blocks = [b.strip() for b in re.split(r'\n{2,}', full_text) if b.strip()]
 
@@ -375,7 +375,7 @@ def sentence_similarity(s1, s2):
 
 
 
-# 英文关键词 → 中文对应词典（用于在中文句里定位）
+# 英文关键词 → 中文对应词典（用于在中文句里定位)
 
 EN_ZH_DICT = {
 
@@ -505,7 +505,7 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
-    # Step 1: 找最匹配的 sahaja 段落（英文段关键词重叠最多）
+    # Step 1: 找最匹配的 sahaja 段落（英文段关键词重叠最多)
 
     best_score = 0
 
@@ -637,7 +637,7 @@ def do_alignment_and_audit():
     if last_pi < first_pi: last_pi = first_pi
     for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
         if pairs[pi][1].strip(): last_pi = pi
-    print(f"[translate] 锚定[{first_pi}~{last_pi}]"）
+    print(f"[translate] 锚定[{first_pi}~{last_pi}]")
     zh_pool = []
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
         for zs in re.split(r"[。！？，]", pairs[pi][1]):
@@ -652,7 +652,7 @@ def do_alignment_and_audit():
     used = set()
     aligned = []
     for i, sent in enumerate(amruta_sents):
-        # 阿里云翻译（兜底）
+        # 阿里云翻译（兜底)
         aliyun_zh = aliyun_translate_title(sent)
         # BGE找未使用的最佳IMA子句
         if _bg is not None:
