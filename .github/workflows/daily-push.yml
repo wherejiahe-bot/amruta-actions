@@ -30,6 +30,7 @@ jobs:
           IMA_CLIENT_ID: ${{ secrets.IMA_CLIENT_ID }}
           IMA_API_KEY: ${{ secrets.IMA_API_KEY }}
           IMA_KB_ID: ${{ secrets.IMA_KB_ID }}
+          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
         run: python3 scripts/step2_translate.py
