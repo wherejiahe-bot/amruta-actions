@@ -303,131 +303,81 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
     return zh_sents[min(zh_idx, len(zh_sents) - 1)]
 
 def do_alignment_and_audit():
-    """句级对齐+审核修正。位置切割+标点边界对齐。"""
+    """句级对齐+审核修正。阿里云翻译做锚点，IMA中文做答案。"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents:
         return
-    stopwords = {'that','this','with','have','your','from','they','them',
-                 'will','what','when','into','been','were','also','just',
-                 'more','than','then','there','their','which','still','only',
-                 'such','very','even','does','dont','cant','wont','should'}
-    def best_para_for_sent(en_s, sahaja_pairs_list):
-        kws = set(re.findall(r'[a-z]{4,}', en_s.lower())) - stopwords
-        best_sc, best_pi = 0, 0
-        for pi, (ep, zp) in enumerate(sahaja_pairs_list):
-            if not zp.strip(): continue
-            ep_words = set(re.findall(r'[a-z]{4,}', ep.lower())) - stopwords
-            if not ep_words: continue
-            sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
-            if sc > best_sc:
-                best_sc, best_pi = sc, pi
-        return best_pi
-    first_pi = best_para_for_sent(amruta_sents[0], pairs)
-    last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
-    if last_pi < first_pi:
-        last_pi = first_pi
-    # 拼接锚定范围内的所有英文和中文
-    all_zh = "".join(pairs[pi][1] for pi in range(first_pi, last_pi + 1))
-    all_en = " ".join(pairs[pi][0] for pi in range(first_pi, last_pi + 1))
-    # 保存原始中文子句（用于审核修正）
-    orig_zh_pool = []
-    for pi in range(first_pi, last_pi + 1):
-        for zs in re.split(r'[。！？]', pairs[pi][1]):
+    # 构建IMA中文子句池（按句号切分）
+    ima_zh_pool = []
+    for ep, zp in pairs:
+        for zs in re.split(r'[。！？]', zp):
             zs = zs.strip()
             if len(zs) > 3:
-                orig_zh_pool.append(zs)
-    # 对每句amruta做位置定位+中文切割
+                ima_zh_pool.append(zs)
+    if not ima_zh_pool:
+        ima_zh_pool = [zp for _, zp in pairs if zp.strip()]
     aligned = []
-    prev_end = 0
+    total = len(amruta_sents)
     for i, sent in enumerate(amruta_sents):
-        # 在all_en中找位置
-        pos = -1
-        for look_len in [30, 25, 20, 15, 10]:
-            if len(sent) >= look_len:
-                search_key = sent[:look_len]
-                # 跳过前导空格和特殊字符
-                search_key = re.sub(r"^[\[\]\s\"'.?!,\-;:]+", '', search_key)
-                if len(search_key) >= look_len - 5:
-                    pos = all_en.find(search_key, max(prev_end - 20, 0))
-                    if pos >= 0:
-                        break
-        if pos >= 0:
-            # 按位置比例切中文
-            next_pos = pos + len(sent)
-            # 用英文位置的中心点来映射中文位置
-            mid_ratio = (pos + next_pos / 2) / max(len(all_en), 1)
-            zh_center = int(mid_ratio * len(all_zh))
-            # 按英文段落比例确定宽度
-            en_width = len(sent)
-            zh_width = int(en_width / max(len(all_en), 1) * len(all_zh))
-            zh_start = max(zh_center - zh_width // 2, 0)
-            zh_end = min(zh_start + zh_width, len(all_zh))
+        # 1. 阿里云翻译英文句子
+        aliyun_zh = aliyun_translate_title(sent)
+        if not aliyun_zh:
+            aligned.append([sent, ''])
+            continue
+        # 去首尾标点空格、保留12字以内的子句
+        aliyun_clean = re.sub(r'^[\s,，。！？、；：""''""''“”‘’]+', '', aliyun_zh)
+        aliyun_clean = re.sub(r'[\s,，。！？、；：""''""''“”‘’]+$', '', aliyun_clean)
+        aliyun_kws = set(aliyun_clean)  # 逐字作为关键词
+        # 2. 在IMA中文池中找最佳匹配
+        best_sc, best_zs = 0, ''
+        for zs in ima_zh_pool:
+            # 计算中文字符重叠率（取阿里云翻译和IMA子句的公共中文字符数）
+            common_cn = sum(1 for c in aliyun_clean if '\u4e00' <= c <= '\u9fff' and c in zs)
+            if common_cn > best_sc:
+                best_sc, best_zs = common_cn, zs
+        # 3. 如果匹配度够高，用IMA的；否则用阿里云的
+        match_ratio = best_sc / max(len(aliyun_clean), 1)
+        if best_sc >= 3 and match_ratio >= 0.15:
+            final_zh = best_zs
         else:
-            # 找不到位置，均匀比例
-            zh_start = int(i / len(amruta_sents) * len(all_zh))
-            zh_end = int((i + 1) / len(amruta_sents) * len(all_zh))
-        # 调整起始边界到最近的句子开头（前一个句号+1）
-        if i > 0:
-            best_start = zh_start
-            for p in '。！？':
-                pos = all_zh.rfind(p, 0, zh_start)
-                if pos >= 0 and zh_start - (pos + 1) < 15:
-                    best_start = min(best_start, pos + 1)
-            zh_start = best_start
-        # 调整结束边界到最近的句号
-        if i < len(amruta_sents) - 1:
-            best_end = zh_end
-            for p in '。！？':
-                pos = all_zh.find(p, zh_end - 2)
-                if pos >= 0 and pos - zh_end < 10:
-                    best_end = max(best_end, pos + 1)
-            # 但不要超过下一句的起始
-            zh_end = min(best_end, len(all_zh))
-        # 取中文
-        if i == len(amruta_sents) - 1:
-            zh_chunk = all_zh[zh_start:]
-        else:
-            zh_chunk = all_zh[zh_start:zh_end]
-        # 清理开头和结尾的孤零字符
-        zh_chunk = re.sub(r'^[，,、\s“”]+', '', zh_chunk)
-        zh_chunk = re.sub(r'[。！？，,、\s]+$', '', zh_chunk)
-        aligned.append([sent, zh_chunk.strip()])
-        if pos >= 0:
-            prev_end = pos + len(sent)
-    print(f"[translate_article] 锚定段落 [{first_pi}~{last_pi}]，对齐: {len(aligned)} 句")
+            final_zh = aliyun_clean
+        aligned.append([sent, final_zh])
+        if (i + 1) % 5 == 0:
+            print(f"[translate] 阿里云翻译进度: {i+1}/{total}")
+    print(f"[translate_article] 阿里云锚定IMA对齐: {len(aligned)} 句")
+    # 替换全局 pairs
     pairs = aligned
     cn_count = sum(1 for _, zh in pairs if zh.strip())
     print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
-    # 审核修正
+    # 简单审核：去重
     print("\n" + "="*60)
     print("[审核+修正] 逐句质量检查")
     print("="*60)
+    zh_seen = {}
     fixed_count = 0
-    # 按顺序从中文池中分配（不重复）
-    pool_cursor = 0
     for idx in range(len(pairs)):
         en_s, zh_s = pairs[idx]
         tag, reason = "✅", ""
-        if not zh_s.strip() or len(zh_s.strip()) < 4:
-            if pool_cursor < len(orig_zh_pool):
-                pairs[idx][1] = orig_zh_pool[pool_cursor]
-                zh_s = orig_zh_pool[pool_cursor]
-                pool_cursor += 1
-                tag, reason = "🔧", f"池取第{pool_cursor}句"
-                fixed_count += 1
-        if tag == "✅" and zh_s.strip():
-            for j in range(idx):
-                if pairs[j][1] == zh_s and pairs[j][1].strip():
-                    if pool_cursor < len(orig_zh_pool):
-                        pairs[idx][1] = orig_zh_pool[pool_cursor]
-                        zh_s = orig_zh_pool[pool_cursor]
-                        pool_cursor += 1
-                        tag, reason = "🔧", f"去重取第{pool_cursor}句"
+        if not zh_s.strip():
+            tag, reason = "❌", "空中文"
+            fixed_count += 1
+        else:
+            if zh_s in zh_seen:
+                # 去重：尝试在ima_zh_pool中找其他匹配
+                for zs in ima_zh_pool:
+                    if zs not in zh_seen.values():
+                        pairs[idx][1] = zs
+                        zh_s = zs
+                        tag, reason = "🔧", "去重"
                         fixed_count += 1
-                    break
-        en_preview = en_s[:55].replace('\n', ' ')
-        zh_preview = zh_s[:30].replace('\n', ' ') if zh_s else "（空）"
+                        break
+                if reason == "✅":
+                    tag, reason = "🔄", "重复无候选"
+            else:
+                zh_seen[zh_s] = idx
+        en_preview = en_s[:50].replace('\n', ' ')
+        zh_preview = zh_s[:25].replace('\n', ' ') if zh_s else "（空）"
         print(f"[{idx+1:02d}] {tag}  EN: {en_preview}")
         print(f"        ZH: {zh_preview}")
         if reason:
@@ -435,7 +385,6 @@ def do_alignment_and_audit():
     print("="*60)
     print(f"[审核] 共修正 {fixed_count} 处")
     print("="*60 + "\n")
-
 # ================================================================== #
 # IMA 知识库备用（登录失败时使用）
 # ================================================================== #
