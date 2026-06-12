@@ -699,10 +699,10 @@ def do_alignment_and_audit():
         if cursor >= len(zh_pool):
             aligned.append([sent, ''])
             continue
+        # 贪婪合并：加子句后用整句比较，相似度提高则继续合并
         merged = zh_pool[cursor]
         best_sim = _calc_similarity(sent, merged)
         cursor += 1
-        # 贪婪合并：如果加下一句相似度更高，就继续加
         while cursor < len(zh_pool):
             trial = merged + zh_pool[cursor]
             trial_sim = _calc_similarity(sent, trial)
