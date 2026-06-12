@@ -639,28 +639,28 @@ def do_alignment_and_audit():
         if pairs[pi][1].strip(): last_pi = pi
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
     # 直接用整段中文（不切子句)，跳过空段
-    zh_paras = []
+    zh_sents = []
     para_indices = []
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
         zp = pairs[pi][1].strip()
         if len(zp) >= 4:
-            zh_paras.append(zp)
+            zh_sents.append(zp)
             para_indices.append(pi)
-    if not zh_paras: pairs = [[s,""] for s in amruta_sents]; return
+    if not zh_sents: pairs = [[s,""] for s in amruta_sents]; return
     # BGE英-中匹配：每句英文找最佳IMA整段
     used = set()
     aligned = []
     if _bg is not None:
         en_vecs = _bg.encode(amruta_sents, normalize_embeddings=True, show_progress_bar=False)
-        zh_vecs = _bg.encode(zh_paras, normalize_embeddings=True, show_progress_bar=False)
+        zh_vecs = _bg.encode(zh_sents, normalize_embeddings=True, show_progress_bar=False)
     for i, sent in enumerate(amruta_sents):
         aliyun_zh = aliyun_translate_title(sent)
         if _bg is not None:
             best_sc, best_zp, best_pi = -1, "", -1
-            for pi in range(len(zh_paras)):
+            for pi in range(len(zh_sents)):
                 if pi in used: continue
                 sc = float(np.dot(en_vecs[i], zh_vecs[pi]))
-                if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_paras[pi], pi
+                if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_sents[pi], pi
             if best_pi >= 0 and best_sc >= 0.4:
                 aligned.append([sent, best_zp])
                 used.add(best_pi)
