@@ -2,7 +2,15 @@
 
 
 
+
+
+
+
 Step 2: Login to sahaja.live, search for Chinese translation.
+
+
+
+
 
 
 
@@ -10,7 +18,15 @@ DIRECTLY adapted from the original Amruta Daily Push Coordinator.py (2nd run()).
 
 
 
+
+
+
+
 Changes from original:
+
+
+
+
 
 
 
@@ -18,7 +34,15 @@ Changes from original:
 
 
 
+
+
+
+
   - hardcoded credentials -> os.environ.get()
+
+
+
+
 
 
 
@@ -26,7 +50,15 @@ Changes from original:
 
 
 
+
+
+
+
 Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp/sahaja_link.txt
+
+
+
+
 
 
 
@@ -34,13 +66,31 @@ Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp
 
 
 
+
+
+
+
 import json, re, os, urllib.request, urllib.parse, hashlib, hmac, base64, time, uuid
+
+
 
 import warnings
 
+
+
 warnings.filterwarnings("ignore")
 
+
+
 from datetime import datetime
+
+
+
+
+
+
+
+
 
 
 
@@ -52,7 +102,15 @@ from datetime import datetime
 
 
 
+
+
+
+
 def aliyun_translate_title(text):
+
+
+
+
 
 
 
@@ -60,7 +118,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
     ak_secret = os.environ.get("ALIYUN_ACCESS_KEY_SECRET", "")
+
+
+
+
 
 
 
@@ -68,7 +134,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         return ""
+
+
+
+
 
 
 
@@ -76,7 +150,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         sorted_keys = sorted(params.keys())
+
+
+
+
 
 
 
@@ -84,7 +166,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         string_to_sign = 'POST&%2F&' + urllib.parse.quote(canonicalized, safe='')
+
+
+
+
 
 
 
@@ -92,7 +182,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         return sig
+
+
+
+
 
 
 
@@ -100,7 +198,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         params = {
+
+
+
+
 
 
 
@@ -108,7 +214,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
             'FormatType': 'text', 'SourceLanguage': 'en', 'TargetLanguage': 'zh',
+
+
+
+
 
 
 
@@ -116,7 +230,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
             'Timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+
+
+
+
 
 
 
@@ -124,7 +246,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
             'SignatureNonce': str(uuid.uuid4()), 'Format': 'JSON',
+
+
+
+
 
 
 
@@ -132,7 +262,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         params['Signature'] = sign(params, ak_secret)
+
+
+
+
 
 
 
@@ -140,7 +278,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         req = urllib.request.Request('https://mt.cn-hangzhou.aliyuncs.com/', data=body, method='POST',
+
+
+
+
 
 
 
@@ -148,7 +294,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         resp = urllib.request.urlopen(req, timeout=10)
+
+
+
+
 
 
 
@@ -156,7 +310,15 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
         if result.get('Code') == '200':
+
+
+
+
 
 
 
@@ -164,11 +326,23 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
     except:
 
 
 
+
+
+
+
         pass
+
+
+
+
 
 
 
@@ -180,7 +354,19 @@ def aliyun_translate_title(text):
 
 
 
+
+
+
+
+
+
+
+
 def polish_title(zh):
+
+
+
+
 
 
 
@@ -188,11 +374,23 @@ def polish_title(zh):
 
 
 
+
+
+
+
     zh = re.sub(r'(来起作用的|起作用的|来发挥作用的)$', '', zh).strip()
 
 
 
+
+
+
+
     zh = re.sub(r'^(通过你们|通过我们|通过|在于|由于|因为|当你们|当我们)', '', zh).strip()
+
+
+
+
 
 
 
@@ -204,7 +402,19 @@ def polish_title(zh):
 
 
 
+
+
+
+
+
+
+
+
 def extract_title_cn_from_pairs(pairs_list, en_title):
+
+
+
+
 
 
 
@@ -212,7 +422,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
     if not keywords:
+
+
+
+
 
 
 
@@ -220,7 +438,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
     for en, zh in pairs_list:
+
+
+
+
 
 
 
@@ -228,7 +454,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
             continue
+
+
+
+
 
 
 
@@ -236,7 +470,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
         if all(kw in en_lower for kw in keywords):
+
+
+
+
 
 
 
@@ -244,7 +486,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
             zh_sents = re.split(r'[，。]', zh)
+
+
+
+
 
 
 
@@ -252,7 +502,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
                 es_lower = es.lower()
+
+
+
+
 
 
 
@@ -260,7 +518,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
                     ratio = i / max(len(en_sents) - 1, 1)
+
+
+
+
 
 
 
@@ -268,7 +534,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
                     zh_part = zh_sents[zh_idx].strip() if zh_idx < len(zh_sents) else ""
+
+
+
+
 
 
 
@@ -276,7 +550,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
                         return polish_title(zh_part)
+
+
+
+
 
 
 
@@ -284,7 +566,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
                 part = part.strip()
+
+
+
+
 
 
 
@@ -292,7 +582,15 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
                     return polish_title(part)
+
+
+
+
 
 
 
@@ -304,7 +602,19 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
+
+
+
+
+
+
+
+
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
+
+
+
+
 
 
 
@@ -316,7 +626,19 @@ with open("/tmp/article_raw.json", encoding="utf-8") as f:
 
 
 
+
+
+
+
+
+
+
+
 date_str = article["date"]
+
+
+
+
 
 
 
@@ -324,7 +646,15 @@ title_en = article["title"]
 
 
 
+
+
+
+
 content  = article["content"]
+
+
+
+
 
 
 
@@ -336,11 +666,27 @@ link     = article.get("link", "")
 
 
 
+
+
+
+
+
+
+
+
 sahaja_link = None
 
 
 
+
+
+
+
 pairs = []
+
+
+
+
 
 
 
@@ -352,7 +698,19 @@ title_cn = title_en  # 先设 fallback，找到 pairs 后再更新
 
 
 
+
+
+
+
+
+
+
+
 def parse_sahaja_full_text(full_text):
+
+
+
+
 
 
 
@@ -360,11 +718,23 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
     def is_zh_block(text):
 
 
 
+
+
+
+
         cn = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+
+
+
+
 
 
 
@@ -376,7 +746,23 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
+
+
+
+
     blocks = [b.strip() for b in re.split(r'\n{2,}', full_text) if b.strip()]
+
+
+
+
+
+
+
+
 
 
 
@@ -388,7 +774,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
         """判断是否为头部元信息行（日期、地点、语言说明、译注等)"""
+
+
+
+
 
 
 
@@ -396,7 +790,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
             return True
+
+
+
+
 
 
 
@@ -404,7 +806,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
             return True
+
+
+
+
 
 
 
@@ -412,7 +822,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
             return True
+
+
+
+
 
 
 
@@ -420,11 +838,23 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
                                    '以下翻译', '供大家参考', 'subtitles', 'Subtitles']):
 
 
 
+
+
+
+
             return True
+
+
+
+
 
 
 
@@ -432,7 +862,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
         if (re.search(r'\((?:United States|USA|UK|India|France|Italy|Australia|Germany|Spain)\)', b)
+
+
+
+
 
 
 
@@ -440,7 +878,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
             return True
+
+
+
+
 
 
 
@@ -448,7 +894,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
         if (re.search(r'\b(19|20)\d{2}\b', b)
+
+
+
+
 
 
 
@@ -456,11 +910,23 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
                 and not re.search(r'\b(is|are|was|were|have|has|will|can|should|must|know|think|feel|decide)\b', b, re.I)):
 
 
 
+
+
+
+
             return True
+
+
+
+
 
 
 
@@ -472,7 +938,19 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
+
+
+
+
     result = []
+
+
+
+
 
 
 
@@ -480,7 +958,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
     # 跳过头部元信息，找到正文起点（第一个非元信息的英文段)
+
+
+
+
 
 
 
@@ -488,7 +974,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
         b = blocks[i]
+
+
+
+
 
 
 
@@ -496,7 +990,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
             break
+
+
+
+
 
 
 
@@ -508,7 +1010,19 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
+
+
+
+
     while i < len(blocks):
+
+
+
+
 
 
 
@@ -516,11 +1030,23 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
         if is_zh_block(en_block):
 
 
 
+
+
+
+
             i += 1
+
+
+
+
 
 
 
@@ -528,7 +1054,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
         if i + 1 < len(blocks) and is_zh_block(blocks[i + 1]):
+
+
+
+
 
 
 
@@ -536,7 +1070,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
             result.append([en_block, zh_block])
+
+
+
+
 
 
 
@@ -544,7 +1086,15 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
         else:
+
+
+
+
 
 
 
@@ -552,7 +1102,19 @@ def parse_sahaja_full_text(full_text):
 
 
 
+
+
+
+
             i += 1
+
+
+
+
+
+
+
+
 
 
 
@@ -561,6 +1123,14 @@ def parse_sahaja_full_text(full_text):
 
 
     return result
+
+
+
+
+
+
+
+
 
 
 
@@ -572,7 +1142,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
     """解析 EN/ZH 合并在同一段落的格式（1978年早期讲话)。"""
+
+
+
+
 
 
 
@@ -580,7 +1158,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
     result = []
+
+
+
+
 
 
 
@@ -588,7 +1174,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
     for i, b in enumerate(blocks):
+
+
+
+
 
 
 
@@ -596,7 +1190,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
         if cn == 0 and len(b) > 40 and re.search(r'[A-Z][a-z]', b):
+
+
+
+
 
 
 
@@ -604,7 +1206,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
             break
+
+
+
+
 
 
 
@@ -612,7 +1222,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
         cn = sum(1 for c in block if '\u4e00' <= c <= '\u9fff')
+
+
+
+
 
 
 
@@ -620,7 +1238,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
             result.append([block, ''])
+
+
+
+
 
 
 
@@ -628,7 +1254,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
         m = re.split(r'(?<=[.!?])\s*(?=[\u4e00-\u9fff])', block, maxsplit=1)
+
+
+
+
 
 
 
@@ -636,7 +1270,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
             en_part, zh_part = m[0].strip(), m[1].strip()
+
+
+
+
 
 
 
@@ -644,7 +1286,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
                 result.append([en_part, zh_part])
+
+
+
+
 
 
 
@@ -652,7 +1302,15 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
         for i, c in enumerate(block):
+
+
+
+
 
 
 
@@ -660,11 +1318,23 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
                 result.append([block[:i].strip(), block[i:].strip()])
 
 
 
+
+
+
+
                 break
+
+
+
+
 
 
 
@@ -676,7 +1346,19 @@ def parse_merged_text(full_text):
 
 
 
+
+
+
+
+
+
+
+
 def has_chinese(pairs_list):
+
+
+
+
 
 
 
@@ -688,7 +1370,19 @@ def has_chinese(pairs_list):
 
 
 
+
+
+
+
+
+
+
+
 # ================================================================== #
+
+
+
+
 
 
 
@@ -696,7 +1390,15 @@ def has_chinese(pairs_list):
 
 
 
+
+
+
+
 # ================================================================== #
+
+
+
+
 
 
 
@@ -704,11 +1406,23 @@ def split_sentences(text):
 
 
 
+
+
+
+
     """按句号/问号/感叹号+空格+大写字母拆分英文句"""
 
 
 
+
+
+
+
     sents = re.split(r'(?<=[.!?])\s+(?=[A-Z"\'(])', text.strip())
+
+
+
+
 
 
 
@@ -720,7 +1434,19 @@ def split_sentences(text):
 
 
 
+
+
+
+
+
+
+
+
 def sentence_similarity(s1, s2):
+
+
+
+
 
 
 
@@ -728,7 +1454,15 @@ def sentence_similarity(s1, s2):
 
 
 
+
+
+
+
     w1 = set(re.findall(r'\b\w{4,}\b', s1.lower()))
+
+
+
+
 
 
 
@@ -736,11 +1470,23 @@ def sentence_similarity(s1, s2):
 
 
 
+
+
+
+
     if not w1 or not w2:
 
 
 
+
+
+
+
         return 0
+
+
+
+
 
 
 
@@ -752,7 +1498,19 @@ def sentence_similarity(s1, s2):
 
 
 
+
+
+
+
+
+
+
+
 # 英文关键词 → 中文对应词典（用于在中文句里定位)
+
+
+
+
 
 
 
@@ -760,7 +1518,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'advertisement': '广告', 'photographs': '照片', 'photograph': '照片',
+
+
+
+
 
 
 
@@ -768,7 +1534,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'establish': '体系', 'shoulders': '肩膀', 'strong': '坚强',
+
+
+
+
 
 
 
@@ -776,7 +1550,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'liberation': '解脱', 'binding': '束缚', 'attached': '依恋',
+
+
+
+
 
 
 
@@ -784,7 +1566,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'vicious': '恶性', 'circle': '循环', 'build': '建设',
+
+
+
+
 
 
 
@@ -792,7 +1582,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'transitory': '短暂', 'eternal': '永恒', 'detached': '解脱',
+
+
+
+
 
 
 
@@ -800,7 +1598,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'watch': '观察', 'subtle': '微妙', 'tagging': '拖累',
+
+
+
+
 
 
 
@@ -808,7 +1614,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'carry': '承担', 'carrying': '承担',
+
+
+
+
 
 
 
@@ -816,7 +1630,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'inside': '内心', 'outside': '外在',
+
+
+
+
 
 
 
@@ -824,7 +1646,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'involved': '陷入', 'seeking': '寻求',
+
+
+
+
 
 
 
@@ -832,7 +1662,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'grow': '成长', 'growing': '成长', 'growth': '成长',
+
+
+
+
 
 
 
@@ -840,7 +1678,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'reason': '理由', 'wisdom': '智慧',
+
+
+
+
 
 
 
@@ -848,7 +1694,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'balance': '平衡', 'centre': '中心', 'central': '中心',
+
+
+
+
 
 
 
@@ -856,7 +1710,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'understand': '理解', 'understanding': '理解',
+
+
+
+
 
 
 
@@ -864,7 +1726,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'reality': '实相', 'truth': '真理',
+
+
+
+
 
 
 
@@ -872,7 +1742,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'beyond': '超越', 'transcend': '超越',
+
+
+
+
 
 
 
@@ -880,7 +1758,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'joy': '喜乐', 'bliss': '极乐',
+
+
+
+
 
 
 
@@ -888,7 +1774,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'meditation': '冥想', 'thoughtless': '无思虑',
+
+
+
+
 
 
 
@@ -896,7 +1790,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'chakra': '轮穴', 'kundalini': '灵量',
+
+
+
+
 
 
 
@@ -904,7 +1806,15 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
     'enlighten': '开悟', 'awaken': '觉醒',
+
+
+
+
 
 
 
@@ -916,7 +1826,19 @@ EN_ZH_DICT = {
 
 
 
+
+
+
+
+
+
+
+
 def en_sent_to_zh_keywords(en_sent):
+
+
+
+
 
 
 
@@ -924,7 +1846,15 @@ def en_sent_to_zh_keywords(en_sent):
 
 
 
+
+
+
+
     words = re.findall(r'\b[a-z]{4,}\b', en_sent.lower())
+
+
+
+
 
 
 
@@ -932,7 +1862,15 @@ def en_sent_to_zh_keywords(en_sent):
 
 
 
+
+
+
+
     for w in words:
+
+
+
+
 
 
 
@@ -940,7 +1878,15 @@ def en_sent_to_zh_keywords(en_sent):
 
 
 
+
+
+
+
             zh_kws.append(EN_ZH_DICT[w])
+
+
+
+
 
 
 
@@ -952,11 +1898,27 @@ def en_sent_to_zh_keywords(en_sent):
 
 
 
+
+
+
+
+
+
+
+
 def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     """
+
+
+
+
 
 
 
@@ -964,7 +1926,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     1. 在 sahaja 段级 pairs 英文里找最匹配的段落
+
+
+
+
 
 
 
@@ -972,7 +1942,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     """
+
+
+
+
 
 
 
@@ -980,7 +1958,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
                  'will','what','when','into','been','were','also','just',
+
+
+
+
 
 
 
@@ -988,7 +1974,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
                  'such','very','even','does','dont','cant','wont','should'}
+
+
+
+
 
 
 
@@ -1000,11 +1994,31 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
+
+
+
+
     if not en_keywords:
 
 
 
+
+
+
+
         return ""
+
+
+
+
+
+
+
+
 
 
 
@@ -1016,7 +2030,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     best_score = 0
+
+
+
+
 
 
 
@@ -1024,7 +2046,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     best_en_para = ""
+
+
+
+
 
 
 
@@ -1032,7 +2062,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
         if not zh_para.strip():
+
+
+
+
 
 
 
@@ -1040,7 +2078,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
         para_words = set(re.findall(r'\b[a-z]{4,}\b', en_para.lower())) - stopwords
+
+
+
+
 
 
 
@@ -1048,7 +2094,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
         if score > best_score:
+
+
+
+
 
 
 
@@ -1056,7 +2110,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
             best_zh_para = zh_para
+
+
+
+
 
 
 
@@ -1068,7 +2130,19 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
+
+
+
+
     if best_score < 0.2 or not best_zh_para:
+
+
+
+
 
 
 
@@ -1080,7 +2154,19 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
+
+
+
+
     # Step 2: 把英文句关键词翻成中文
+
+
+
+
 
 
 
@@ -1092,7 +2178,19 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
+
+
+
+
     # Step 3: 中文段按句拆分，找命中中文关键词最多的子句
+
+
+
+
 
 
 
@@ -1100,7 +2198,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     if not zh_sents:
+
+
+
+
 
 
 
@@ -1112,7 +2218,19 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
+
+
+
+
     if zh_kws:
+
+
+
+
 
 
 
@@ -1120,7 +2238,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
         best_zh_sent = zh_sents[0]
+
+
+
+
 
 
 
@@ -1128,7 +2254,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
             if used_zh and zs in used_zh:
+
+
+
+
 
 
 
@@ -1136,7 +2270,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
             sc = sum(1 for kw in zh_kws if kw in zs)
+
+
+
+
 
 
 
@@ -1144,11 +2286,23 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
                 best_zh_score = sc
 
 
 
+
+
+
+
                 best_zh_sent = zs
+
+
+
+
 
 
 
@@ -1160,7 +2314,19 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
+
+
+
+
     # 没有中文关键词时，按位置比例映射
+
+
+
+
 
 
 
@@ -1168,7 +2334,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     sent_idx = 0
+
+
+
+
 
 
 
@@ -1176,7 +2350,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     for idx, es in enumerate(en_sents_in_para):
+
+
+
+
 
 
 
@@ -1184,7 +2366,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
         sc = len(en_keywords & es_words) / max(len(en_keywords), 1)
+
+
+
+
 
 
 
@@ -1192,7 +2382,15 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
             best_sub = sc
+
+
+
+
 
 
 
@@ -1200,11 +2398,23 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
     ratio = sent_idx / max(len(en_sents_in_para) - 1, 1)
 
 
 
+
+
+
+
     zh_idx = round(ratio * (len(zh_sents) - 1))
+
+
+
+
 
 
 
@@ -1220,7 +2430,23 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 import numpy as np
+
+
+
+
 
 
 
@@ -1228,7 +2454,15 @@ from sentence_transformers import SentenceTransformer
 
 
 
+
+
+
+
 try:
+
+
+
+
 
 
 
@@ -1236,7 +2470,15 @@ try:
 
 
 
+
+
+
+
 except:
+
+
+
+
 
 
 
@@ -1244,7 +2486,15 @@ except:
 
 
 
+
+
+
+
 def do_alignment_and_audit():
+
+
+
+
 
 
 
@@ -1252,11 +2502,23 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
     global pairs, title_cn
 
 
 
+
+
+
+
     amruta_sents = split_sentences(content)
+
+
+
+
 
 
 
@@ -1264,7 +2526,15 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
     stopwords = {"that","this","with","have","your","from","they","them","will","what","when","into","been","were","also","just","more","than","then","there","their","which","still","only","such","very","even","does","dont","cant","wont","should"}
+
+
+
+
 
 
 
@@ -1272,7 +2542,15 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
         kws = set(re.findall(r"[a-z]{4,}", en_s.lower())) - stopwords
+
+
+
+
 
 
 
@@ -1280,7 +2558,15 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
         for pi, (ep, zp) in enumerate(lst):
+
+
+
+
 
 
 
@@ -1288,7 +2574,15 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
             epw = set(re.findall(r"[a-z]{4,}", ep.lower())) - stopwords
+
+
+
+
 
 
 
@@ -1296,7 +2590,15 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
             sc = len(kws & epw) / max(len(kws), 1) if kws else 0
+
+
+
+
 
 
 
@@ -1304,7 +2606,15 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
         return best_pi
+
+
+
+
 
 
 
@@ -1312,7 +2622,15 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
     last_pi = best_para_for_sent(amruta_sents[-1], pairs)
+
+
+
+
 
 
 
@@ -1320,7 +2638,15 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
     for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
+
+
+
+
 
 
 
@@ -1328,335 +2654,616 @@ def do_alignment_and_audit():
 
 
 
+
+
+
+
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
+
+
+
+
 
 
 
     # 按句号切分中文子句（不按逗号），长度>=2
 
+
+
     zh_sents = []
+
+
 
     para_indices = []
 
+
+
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
+
+
 
         zp = pairs[pi][1].strip()
 
+
+
         if len(zp) >= 2:
+
+
 
             sub_sents = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) >= 2]
 
+
+
             for ss in sub_sents:
+
+
 
                 zh_sents.append(ss)
 
+
+
                 para_indices.append(pi)
+
+
 
     if not zh_sents: pairs = [[s,""] for s in amruta_sents]; return
 
+
+
     # BGE英-中匹配：阈值0.4，低于阈值用阿里云
+
+
 
     used = set()
 
+
+
     aligned = []
+
+
 
     if _bg is not None:
 
+
+
         en_vecs = _bg.encode(amruta_sents, normalize_embeddings=True, show_progress_bar=False)
+
+
 
         zh_vecs = _bg.encode(zh_sents, normalize_embeddings=True, show_progress_bar=False)
 
+
+
     for i, sent in enumerate(amruta_sents):
+
+
 
         aliyun_zh = aliyun_translate_title(sent)
 
+
+
         if _bg is not None:
+
+
 
             best_sc, best_zp, best_pi = -1, "", -1
 
+
+
             for pi in range(len(zh_sents)):
+
+
 
                 if pi in used: continue
 
+
+
                 sc = float(np.dot(en_vecs[i], zh_vecs[pi]))
+
+
 
                 if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_sents[pi], pi
 
+
+
             if best_pi >= 0 and best_sc >= 0.4:
+
+
 
                 aligned.append([sent, best_zp])
 
+
+
                 used.add(best_pi)
+
+
 
             else: aligned.append([sent, aliyun_zh or ""])
 
+
+
         else: aligned.append([sent, aliyun_zh or ""])
+
+
 
     pairs = [list(p) for p in aligned]
 
+
+
     # 后处理
+
+
 
     for idx in range(len(pairs)):
 
+
+
         zh = pairs[idx][1]
+
+
 
         zh = zh.replace("左翼还是右翼", "偏左或偏右")
 
+
+
         zh = zh.replace("左翼或右翼", "偏左或偏右")
+
+
 
         pairs[idx][1] = zh
 
+
+
     cn = sum(1 for _,z in pairs if z.strip())
+
+
 
     print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
 
 
 
+
+
+
+
 def search_ima_kb(query_text, phase_name):
+
+
 
     """搜索IMA知识库，返回是否找到有效pairs"""
 
+
+
     global sahaja_link, pairs, title_cn
+
+
 
     cid = os.environ.get("IMA_CLIENT_ID", "")
 
+
+
     aik = os.environ.get("IMA_API_KEY", "")
+
+
 
     if not cid or not aik:
 
+
+
         return False
+
+
 
     print(f"[translate_article] IMA KB search {phase_name}: {query_text[:80]}...")
 
+
+
     ima_headers = {"ima-openapi-clientid": cid, "ima-openapi-apikey": aik, "Content-Type": "application/json"}
+
+
 
     safe_query = query_text.replace("'", "").replace('"', "")[:200]
 
+
+
     query = json.dumps({"query": safe_query, "kb_id": "XbbHhqibvE1vxMvwq4uzEF3dyxcQhSgOBCdi9gIAWWI=", "page_num": 1, "page_size": 10})
+
+
 
     try:
 
+
+
         req_ima = urllib.request.Request("https://ima.qq.com/openapi/wiki/v1/search_knowledge", data=query.encode(), headers=ima_headers, method='POST')
+
+
 
         resp_ima = urllib.request.urlopen(req_ima, timeout=15)
 
+
+
         ima_result = json.loads(resp_ima.read())
+
+
 
         docs = ima_result.get("data", {}).get("documents", [])
 
+
+
         if not docs:
+
+
 
             print(f"[translate_article] IMA KB {phase_name}: no documents found")
 
+
+
             return False
+
+
 
         for doc in docs:
 
+
+
             file_id = doc.get("kb_file_id", "")
+
+
 
             if not file_id:
 
+
+
                 continue
+
+
 
             media_req = urllib.request.Request(f"https://ima.qq.com/openapi/wiki/v1/get_media_info?kb_file_id={file_id}", headers=ima_headers)
 
+
+
             media_resp = urllib.request.urlopen(media_req, timeout=15)
+
+
 
             media_data = json.loads(media_resp.read())
 
+
+
             url = media_data.get("data", {}).get("url", "")
+
+
 
             dl_headers_raw = media_data.get("data", {}).get("headers", {})
 
+
+
             if not url:
+
+
 
                 continue
 
+
+
             dl_req = urllib.request.Request(url, headers=dl_headers_raw)
+
+
 
             dl_resp = urllib.request.urlopen(dl_req, timeout=30)
 
+
+
             md_text = dl_resp.read().decode("utf-8").replace('\r\n', '\n')
+
+
 
             sahaja_link = url
 
+
+
             pairs1 = parse_sahaja_full_text(md_text)
+
+
 
             pairs2 = parse_merged_text(md_text)
 
+
+
             paired = pairs1 if len(pairs1) > len(pairs2) else pairs2
+
+
 
             if paired:
 
+
+
                 pairs = paired
+
+
 
                 tc = extract_title_cn_from_pairs(pairs, title_en)
 
+
+
                 if tc: title_cn = tc
+
+
 
                 print(f"[translate_article] IMA KB found: {len(pairs)} pairs")
 
+
+
                 return True
+
+
 
         print(f"[translate_article] IMA KB {phase_name}: files found but no valid pairs")
 
+
+
         return False
+
+
 
     except Exception as e:
 
+
+
         print(f"[translate_article] IMA KB {phase_name} failed: {e}")
+
+
 
         return False
 
 
 
-def nth_sentence(text, n=0):
-
-    """提取正文第一句（按句号/问号/感叹号切分，取第一句）"""
-
-    s = text.strip()
-
-    m = re.split(r'(?<=[.!?])\s+', s)
-
-    first = m[0].strip() if m else s[:120]
-
-    return first[:120]
 
 
 
-# ============ IMA KB Two-Phase Search ============ #
 
+
+# ============ IMA KB Date-Based Search ============ #
 if not pairs:
-
-    # Phase 1: search by first sentence of body content (用户要求)
-
-    phase1_query = nth_sentence(content, 1)
-
-    phase1_ok = search_ima_kb(phase1_query, "Phase1(body-second-sent)")
-
+    # Phase 1: search by date string (YYYY-MM-DD) - date_str = e.g. "1978-06-12"
+    phase1_ok = search_ima_kb(date_str, "Phase1(date)")
     
-
-    # Phase 2: if empty, search by first 200 chars of body content
-
+    # Phase 2: if empty, search by body content
     if not phase1_ok:
-
-        print(f"[translate_article] Phase1 empty, retrying with body content...")
-
+        print(f"[translate_article] Phase1 date search empty, retrying with body content...")
         phase2_ok = search_ima_kb(content[:200], "Phase2(body)")
+
+
+
+
 
 
 
 # BGE alignment (only if IMA found pairs with Chinese)
 
+
+
 if pairs and has_chinese(pairs):
+
+
 
     do_alignment_and_audit()
 
+
+
 else:
+
+
 
     # Aliyun fallback
 
+
+
     amruta_sents = split_sentences(content)
+
+
 
     if amruta_sents:
 
+
+
         aligned = []
+
+
 
         for s in amruta_sents:
 
+
+
             zh = aliyun_translate_title(s)
+
+
 
             aligned.append([s, zh or ""])
 
+
+
         pairs = [list(p) for p in aligned]
+
+
 
         print(f"[translate_article] Aliyun done: {len(pairs)} sentences")
 
 
 
+
+
+
+
 # Fallback: no pairs at all
+
+
 
 if not pairs:
 
+
+
     paras = [p.strip() for p in content.split(chr(10)) if p.strip()]
+
+
 
     pairs = [[p, ""] for p in paras]
 
+
+
     print(f"[translate_article] No Chinese, EN only: {len(pairs)} paras")# ============ 标题翻译 + D Link ============ #
+
+
 
 if title_cn == title_en or not any("\u4e00" <= c <= "\u9fff" for c in title_cn):
 
+
+
     t = aliyun_translate_title(title_en)
+
+
 
     if t: title_cn = t
 
+
+
 final_link = sahaja_link or link
+
+
 
 # ============ HTML ============ #
 
+
+
 lines = []
+
+
 
 for en, zh in pairs:
 
+
+
     en = str(en).strip() if en else ""
+
+
 
     zh = str(zh).strip() if zh else ""
 
+
+
     if not en and not zh: continue
+
+
 
     if en and zh:
 
+
+
         lines.append("<p style=\"color:#888;font-size:0.85em;margin:0 0 2px 0;\">" + en + "</p><p style=\"margin:0 0 14px 0;\">" + zh + "</p>")
+
+
 
     elif en:
 
+
+
         lines.append("<p style=\"color:#888;font-size:0.85em;margin:0 0 14px 0;\">" + en + "</p>")
+
+
 
 pair_html = chr(10).join(lines)
 
+
+
 try:
+
+
 
     from datetime import datetime as dt2
 
+
+
     dt = dt2.strptime(date_str, "%Y-%m-%d")
+
+
 
     dd = date_str
 
+
+
 except: dd = date_str
+
+
 
 link = sahaja_link or link
 
+
+
 html = "<!DOCTYPE html><html><head><meta charset=utf-8><meta name=viewport content=width=device-width,initial-scale=1></head><body style=font-family:Helvetica Neue,Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px 16px;color:#222;line-height:1.7;>"
+
+
 
 html += "<h2 style=margin:0 0 4px 0;font-size:1.25em;font-weight:700;>" + str(title_cn) + "</h2>"
 
+
+
 html += "<p style=color:#888;font-size:0.85em;margin:0 0 4px 0;font-style:italic;>" + str(title_en) + "</p>"
+
+
 
 html += "<p style=color:#aaa;font-size:0.8em;margin:0 0 24px 0;>" + dd + "</p>"
 
+
+
 html += "<hr style=border:none;border-top:1px solid #eee;margin:0 0 24px 0;>"
+
+
 
 html += pair_html
 
+
+
 html += "<hr style=border:none;border-top:1px solid #eee;margin:24px 0 16px 0;>"
 
+
+
 html += "<p style=color:#aaa;font-size:0.8em;margin:0;word-break:break-all;><a href=https://amruta.today/ style=color:#aaa;>https://amruta.today/</a><br><br><a href=" + link + " style=color:#aaa;>" + link + "</a></p>"
+
+
 
 html += "</body></html>"
 
 
 
+
+
+
+
 with open("/tmp/pairs.json", "w", encoding="utf-8") as f:
+
+
 
     json.dump(pairs, f, ensure_ascii=False, indent=2)
 
+
+
 with open("/tmp/email_body.html", "w", encoding="utf-8") as f:
+
+
 
     f.write(html)
 
+
+
 with open("/tmp/sahaja_link.txt", "w", encoding="utf-8") as f:
+
+
 
     f.write(link or "")
 
+
+
 print(f"[translate_article] HTML done, {len(pairs)} pairs")
+
+
 
