@@ -2886,7 +2886,7 @@ def search_ima_kb(query_text, phase_name):
 
 
 
-        docs = ima_result.get("data", {}).get("documents", [])
+        docs = ima_result.get("data", {}).get("info_list", [])
 
 
 
