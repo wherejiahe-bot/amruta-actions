@@ -19,10 +19,6 @@ Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp
 import json, re, os, urllib.request, urllib.parse, hashlib, hmac, base64, time, uuid
 import warnings
 warnings.filterwarnings("ignore")
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from scipy.optimize import linear_sum_assignment
-
 from datetime import datetime
 
 
@@ -612,122 +608,77 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
-# 跨语言语义模型（sentence-transformers，用于顺序贪婪匹配）
-try:
-    _align_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-except:
-    _align_model = None
+QWEN_API_KEY = os.environ.get("QWEN_API_KEY", "")
+QWEN_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+QWEN_URL = "https://api.siliconflow.cn/v1/chat/completions"
 
-def _calc_similarity(en_text, zh_text):
-    """计算一句英文和一段中文的语义相似度（0~1）"""
-    if _align_model is None or not en_text or not zh_text:
-        return 0
-    ev = _align_model.encode([en_text], normalize_embeddings=True, show_progress_bar=False)
-    zv = _align_model.encode([zh_text], normalize_embeddings=True, show_progress_bar=False)
-    from sentence_transformers.util import cos_sim
-    sim = float(cos_sim(ev, zv)[0][0])
-    return max(0, min(1, sim))
+def qwen_align(en_sents, zh_pool):
+    """用Qwen做中文子句分配"""
+    if not QWEN_API_KEY or not en_sents or not zh_pool:
+        return [[s, ""] for s in en_sents]
+    en_text = chr(10).join(f"[{i+1}] {s}" for i,s in enumerate(en_sents))
+    zh_text = chr(10).join(f"[{i+1}] {s}" for i,s in enumerate(zh_pool))
+    prompt = "你是一个中英文句子对齐专家。以下英文和中文子句是顺序对应的。\n"
+    prompt += "请将中文子句按顺序分配到对应的英文句子下。每个中文子句只能分配一次。\n\n"
+    prompt += "英文句子：\n" + en_text + "\n\n"
+    prompt += "中文子句（按顺序）：\n" + zh_text + "\n\n"
+    prompt += "输出JSON数组：[[1,2],[3],[4,5,6],...] 每个子数组对应一句英文的中文子句索引（从1开始）。"
+    body = json.dumps({"model":QWEN_MODEL,"messages":[{"role":"user","content":prompt}],"temperature":0.01,"max_tokens":2048})
+    req = urllib.request.Request(QWEN_URL, data=body.encode(), method="POST", headers={"Authorization":"Bearer "+QWEN_API_KEY,"Content-Type":"application/json"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=60)
+        result = json.loads(resp.read().decode())
+        content = result["choices"][0]["message"]["content"]
+        indices = json.loads(content.strip())
+        aligned = []
+        for i, idxs in enumerate(indices):
+            parts = [zh_pool[j-1] for j in idxs if 1 <= j <= len(zh_pool)]
+            zh = "，".join(parts)
+            en = en_sents[i] if i < len(en_sents) else ""
+            aligned.append([en, zh])
+        while len(aligned) < len(en_sents):
+            aligned.append([en_sents[len(aligned)], ""])
+        return aligned
+    except Exception as e:
+        print(f"[qwen] API error: {e}")
+        return [[s, ""] for s in en_sents]
 
 def do_alignment_and_audit():
-    """句级对齐：段落锚定→顺序贪婪匹配（不能跳句，不能改句）"""
+    """段落锚定+Qwen语义对齐"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
-    if not amruta_sents:
-        return
-    stopwords = {'that','this','with','have','your','from','they','them',
-                 'will','what','when','into','been','were','also','just',
-                 'more','than','then','there','their','which','still','only',
-                 'such','very','even','does','dont','cant','wont','should'}
-    def best_para_for_sent(en_s, sahaja_pairs_list):
-        kws = set(re.findall(r'\b[a-z]{4,}\b', en_s.lower())) - stopwords
+    if not amruta_sents: return
+    stopwords = {"that","this","with","have","your","from","they","them","will","what","when","into","been","were","also","just","more","than","then","there","their","which","still","only","such","very","even","does","dont","cant","wont","should"}
+    def best_para_for_sent(en_s, lst):
+        kws = set(re.findall(r"[a-z]{4,}", en_s.lower())) - stopwords
         best_sc, best_pi = 0, 0
-        for pi, (ep, zp) in enumerate(sahaja_pairs_list):
+        for pi, (ep, zp) in enumerate(lst):
             if not zp.strip(): continue
-            ep_words = set(re.findall(r'\b[a-z]{4,}\b', ep.lower())) - stopwords
-            if not ep_words: continue
-            sc = len(kws & ep_words) / max(len(kws), 1) if kws else 0
-            if sc > best_sc:
-                best_sc, best_pi = sc, pi
+            epw = set(re.findall(r"[a-z]{4,}", ep.lower())) - stopwords
+            if not epw: continue
+            sc = len(kws & epw) / max(len(kws), 1) if kws else 0
+            if sc > best_sc: best_sc, best_pi = sc, pi
         return best_pi
-    # 段落锚定
     first_pi = best_para_for_sent(amruta_sents[0], pairs)
-    last_pi  = best_para_for_sent(amruta_sents[-1], pairs)
+    last_pi = best_para_for_sent(amruta_sents[-1], pairs)
     if last_pi < first_pi: last_pi = first_pi
     if first_pi < 2: first_pi = 2
-    # 用语义模型扩展 last_pi：往后检查每个段落是否与amruta末句相关
-    last_sent = amruta_sents[-1]
-    expand_pi = last_pi
-    skip_count = 0
-    for pi in range(last_pi + 1, min(last_pi + 30, len(pairs))):
-        zp = pairs[pi][1]
-        if not zp.strip():
-            skip_count += 1
-            if skip_count >= 3: break
-            continue
-        sim = _calc_similarity(last_sent, zp)
-        if sim >= 0.3:
-            expand_pi = pi
-            skip_count = 0
-        else:
-            skip_count += 1
-            if skip_count >= 3: break
-    last_pi = expand_pi
-    print(f"[translate_article] 锚定范围语义扩展: [{first_pi}~{last_pi}]")
-    # 从锚定范围切中文子句
+    for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
+        if pairs[pi][1].strip(): last_pi = pi
+    print(f"[translate] 锚定[{first_pi}~{last_pi}]")
     zh_pool = []
-    for pi in range(first_pi, min(last_pi + 1, len(pairs))):
-        for zs in re.split(r'[\u3002\uff01\uff1f\uff0c]', pairs[pi][1]):
+    for pi in range(first_pi, min(last_pi+1, len(pairs))):
+        for zs in re.split(r"[。！？，]", pairs[pi][1]):
             zs = zs.strip()
-            if len(zs) >= 4:
-                zh_pool.append(zs)
+            if len(zs) >= 4: zh_pool.append(zs)
     if not zh_pool:
-        pairs = [[s, ''] for s in amruta_sents]
-        print("[translate_article] IMA中文池为空")
+        pairs = [[s,""] for s in amruta_sents]
         return
-    # 顺序贪婪匹配：每句英文吃连续的N个中文字句
-    # 规则：从当前指针开始，合并子句，算相似度
-    # 加入下一个子句后相似度下降则停止，上升则继续
-    cursor = 0
-    aligned = []
-    for i, sent in enumerate(amruta_sents):
-        if cursor >= len(zh_pool):
-            aligned.append([sent, ''])
-            continue
-        # 初始过滤：跳过问句、过短(<8字)、语义太低的子句
-        while cursor < len(zh_pool):
-            zs = zh_pool[cursor]
-            if len(zs) < 4 or re.search(r'[呢吗]$', zs):
-                cursor += 1; continue
-            en_kw = [w.strip('.,!?"\'-()').lower() for w in sent.split() if len(w.strip('.,!?"\'-()')) > 2]
-            dict_hits = sum(1 for kw in en_kw if kw in EN_ZH_DICT and EN_ZH_DICT[kw] in zs)
-            if dict_hits == 0 and len([k for k in en_kw if k in EN_ZH_DICT]) >= 2:
-                cursor += 1; continue
-            sim = _calc_similarity(sent, zs)
-            if sim < 0.3:
-                cursor += 1; continue
-            break
-        if cursor >= len(zh_pool):
-            aligned.append([sent, '']); continue
-        # 双模型对比：子句与当前句和下一句比，决定归属
-        merged = zh_pool[cursor]
-        cursor += 1
-        print(f"  [{i+1}] 初始子句{cursor}: sim=?.??? | {merged[:20]}")
-        while cursor < len(zh_pool):
-            zs = zh_pool[cursor]
-            sim_cur = _calc_similarity(sent, zs)
-            if i < len(amruta_sents) - 1:
-                sim_nxt = _calc_similarity(amruta_sents[i+1], zs)
-                if sim_cur < sim_nxt:
-                    print(f"      子句{cursor+1}: cur={sim_cur:.3f} < nxt={sim_nxt:.3f} → 留到下一句")
-                    break
-                else:
-                    print(f"      子句{cursor+1}: cur={sim_cur:.3f} >= nxt={sim_nxt:.3f} → 合并")
-            merged = merged + "，" + zs
-            cursor += 1
-        aligned.append([sent, merged])
-    pairs = aligned
-    cn_count = sum(1 for _, zh in pairs if zh.strip())
-    print(f"[translate_article] 锚定[{first_pi}~{last_pi}]，贪婪匹配: {len(pairs)}句，{cn_count}句有中文")
+    print(f"[translate] Qwen对齐: {len(amruta_sents)}句EN->{len(zh_pool)}句ZH")
+    aligned = qwen_align(amruta_sents, zh_pool)
+    pairs = [list(p) for p in aligned]
+    cn = sum(1 for _,z in pairs if z.strip())
+    print(f"[translate] Qwen完成: {len(pairs)}句, {cn}句有中文")
 
 # ================================================================== #
 
