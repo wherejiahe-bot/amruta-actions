@@ -661,7 +661,7 @@ def do_alignment_and_audit():
                 if pi in used: continue
                 sc = float(np.dot(en_vecs[i], zh_vecs[pi]))
                 if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_sents[pi], pi
-            if best_pi >= 0 and best_sc >= 0.4:
+            if best_pi >= 0 and best_sc >= 0.3:
                 aligned.append([sent, best_zp])
                 used.add(best_pi)
             else: aligned.append([sent, aliyun_zh or ""])
