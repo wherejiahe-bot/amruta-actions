@@ -675,6 +675,21 @@ def do_alignment_and_audit():
     pairs = [list(p) for p in aligned]
     cn = sum(1 for _,z in pairs if z.strip())
     print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
+    # 后处理：修正特定翻译错误
+    for idx in range(len(pairs)):
+        zh = pairs[idx][1]
+        zh = zh.replace("左翼还是右翼", "偏左或偏右")
+        zh = zh.replace("左翼或右翼", "偏左或偏右")
+        pairs[idx][1] = zh
+
+# 标题翻译
+if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
+    translated = aliyun_translate_title(title_en)
+    if translated: title_cn = translated
+
+# 底部链接优先用 IMA source
+final_link = sahaja_link or link
+
 # ============ Aliyun translation + HTML build ============ #
 if pairs:
     do_alignment_and_audit()
@@ -715,7 +730,7 @@ pair_html = chr(10).join(lines)
 try:
     from datetime import datetime as dt2
     dt = dt2.strptime(date_str, "%Y-%m-%d")
-    dd = dt.strftime("%Y" + chr(24180) + "%-m" + chr(26376) + "%-d" + chr(26085) + "日")
+    dd = date_str
 except: dd = date_str
 link = sahaja_link or link
 html = "<!DOCTYPE html><html><head><meta charset=utf-8><meta name=viewport content=width=device-width,initial-scale=1></head><body style=font-family:Helvetica Neue,Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px 16px;color:#222;line-height:1.7;>"
