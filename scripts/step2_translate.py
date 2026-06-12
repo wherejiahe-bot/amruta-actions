@@ -7,8 +7,72 @@ Changes from original:
   - return -> file writes
 Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp/sahaja_link.txt
 """
-import json, re, os, urllib.request
+import json, re, os, urllib.request, urllib.parse, hashlib, hmac, base64, time, uuid
 from datetime import datetime
+
+# 阿里云翻译函数（仅标题翻译用）
+def aliyun_translate_title(text):
+    ak_id = os.environ.get("ALIYUN_ACCESS_KEY_ID", "")
+    ak_secret = os.environ.get("ALIYUN_ACCESS_KEY_SECRET", "")
+    if not ak_id or not ak_secret:
+        return ""
+    def sign(params, secret):
+        sorted_keys = sorted(params.keys())
+        canonicalized = '&'.join(f'{urllib.parse.quote(k, safe="")}={urllib.parse.quote(params[k], safe="")}' for k in sorted_keys)
+        string_to_sign = 'POST&%2F&' + urllib.parse.quote(canonicalized, safe='')
+        sig = base64.b64encode(hmac.new((secret + '&').encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha1).digest()).decode('utf-8')
+        return sig
+    try:
+        params = {
+            'Action': 'TranslateGeneral', 'Version': '2018-10-12', 'RegionId': 'cn-hangzhou',
+            'FormatType': 'text', 'SourceLanguage': 'en', 'TargetLanguage': 'zh',
+            'SourceText': text, 'AccessKeyId': ak_id,
+            'Timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'SignatureMethod': 'HMAC-SHA1', 'SignatureVersion': '1.0',
+            'SignatureNonce': str(uuid.uuid4()), 'Format': 'JSON',
+        }
+        params['Signature'] = sign(params, ak_secret)
+        body = urllib.parse.urlencode(params).encode('utf-8')
+        req = urllib.request.Request('https://mt.cn-hangzhou.aliyuncs.com/', data=body, method='POST',
+            headers={'Content-Type': 'application/x-www-form-urlencoded'})
+        resp = urllib.request.urlopen(req, timeout=10)
+        result = json.loads(resp.read().decode('utf-8'))
+        if result.get('Code') == '200':
+            return result.get('Data', {}).get('Translated', '')
+    except:
+        pass
+    return ""
+
+def polish_title(zh):
+    zh = zh.replace('承担起', '肩负起').replace('承担', '肩负')
+    zh = re.sub(r'(来起作用的|起作用的|来发挥作用的)$', '', zh).strip()
+    zh = re.sub(r'^(通过你们|通过我们|通过|在于|由于|因为|当你们|当我们)', '', zh).strip()
+    return zh
+
+def extract_title_cn_from_pairs(pairs_list, en_title):
+    keywords = [w.strip('.,!?"\'-()').lower() for w in en_title.split() if len(w.strip('.,!?"\'-()')) > 2]
+    if not keywords:
+        return None
+    for en, zh in pairs_list:
+        if not zh.strip():
+            continue
+        en_lower = en.lower()
+        if all(kw in en_lower for kw in keywords):
+            en_sents = re.split(r'[.,]', en)
+            zh_sents = re.split(r'[，。]', zh)
+            for i, es in enumerate(en_sents):
+                es_lower = es.lower()
+                if all(kw in es_lower for kw in keywords):
+                    ratio = i / max(len(en_sents) - 1, 1)
+                    zh_idx = round(ratio * (len(zh_sents) - 1))
+                    zh_part = zh_sents[zh_idx].strip() if zh_idx < len(zh_sents) else ""
+                    if len(zh_part) > 4:
+                        return polish_title(zh_part)
+            for part in re.split(r'[，。；]', zh):
+                part = part.strip()
+                if 4 < len(part) <= 20:
+                    return polish_title(part)
+    return None
 
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
     article = json.load(f)
@@ -560,23 +624,33 @@ if not pairs:
                                 # sahaja_link 已在上面从 frontmatter 中提取，不再覆盖
                                 extracted = extract_title_cn_from_pairs(pairs, title_en)
                                 if extracted:
-                                    # 如果提取的标题太长，从中找最核心的子句
                                     if len(extracted) > 15:
-                                        # 取包含关键词的短子句
+                                        # 先尝试按关键词取最短子句
                                         kws = [w.lower() for w in re.findall(r'\b[a-z]{4,}\b', title_en) if w.lower() not in {'the','for','and','that','this','with','from','they','will','what','when','were','also','more','than','then','there','their','which','still','only','about','been'}]
+                                        best_part = ""
                                         for part in re.split(r'[，。；？]', extracted):
                                             part = part.strip()
                                             if not part: continue
                                             if all(kw in part for kw in kws):
-                                                title_cn = part
-                                                break
-                                        else:
-                                            # 没找到包含所有关键词的子句，取最后一个子句（通常是最关键的）
-                                            parts = [p.strip() for p in re.split(r'[，。；？]', extracted) if p.strip()]
-                                            if parts:
-                                                title_cn = parts[-1] if len(parts[-1]) >= 4 else parts[0]
+                                                best_part = part
+                                        if not best_part:
+                                            parts2 = [p.strip() for p in re.split(r'[，。；？]', extracted) if p.strip()]
+                                            if parts2:
+                                                best_part = parts2[-1]
+                                        # 如果关键词截取后还是太长，调用阿里云翻译英文标题
+                                        if len(best_part) > 15:
+                                            translated = aliyun_translate_title(title_en)
+                                            if translated and len(translated) <= 15:
+                                                title_cn = translated
+                                                print(f"[translate_article] 标题阿里云翻译: {title_cn}")
+                                            elif best_part:
+                                                title_cn = best_part
                                             else:
                                                 title_cn = extracted
+                                        elif best_part:
+                                            title_cn = best_part
+                                        else:
+                                            title_cn = extracted
                                     else:
                                         title_cn = extracted
                                     print(f"[translate_article] 标题译文: {title_cn}")
