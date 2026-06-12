@@ -2849,7 +2849,7 @@ def search_ima_kb(query_text, phase_name):
         zh_doc = None
         for doc in docs:
             title = doc.get("title", "")
-            cn_count = sum(1 for c in title if "一" <= c <= "鿿")
+            cn = sum(1 for c in title if "一" <= c <= "鿿")
             print(f'[translate_article]   {title[:50]} | cn={cn}')
             if cn >= 3 and not zh_doc:
                 zh_doc = doc
