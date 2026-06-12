@@ -656,7 +656,7 @@ def do_alignment_and_audit():
     if first_pi < 2: first_pi = 2
     # 从锚定范围切中文子句
     zh_pool = []
-    for pi in range(first_pi, min(last_pi + 1, len(pairs))):
+    for pi in range(first_pi, min(last_pi + 12, len(pairs))):
         for zs in re.split(r'[\u3002\uff01\uff1f\uff0c]', pairs[pi][1]):
             zs = zs.strip()
             if len(zs) >= 4:
