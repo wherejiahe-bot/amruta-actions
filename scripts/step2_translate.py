@@ -17,6 +17,11 @@ Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp
 """
 
 import json, re, os, urllib.request, urllib.parse, hashlib, hmac, base64, time, uuid
+import warnings
+warnings.filterwarnings("ignore")
+import numpy as np
+from sentence_transformers import SentenceTransformer
+from scipy.optimize import linear_sum_assignment
 
 from datetime import datetime
 
@@ -606,54 +611,72 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 
 
 
+
+# 跨语言语义模型（sentence-transformers，用于句子对齐）
+try:
+    _align_model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+except:
+    _align_model = None
+
+def _align_by_semantics(en_sents, zh_pool):
+    """用语义向量+匈牙利算法做全局最优对齐"""
+    if not en_sents or not zh_pool or _align_model is None:
+        return [(s, '') for s in en_sents]
+    # 编码
+    en_vecs = _align_model.encode(en_sents, show_progress_bar=False)
+    zh_vecs = _align_model.encode(zh_pool, show_progress_bar=False)
+    # 相似度矩阵
+    sim = np.dot(en_vecs, zh_vecs.T)
+    # 如英文>中文，对中文做padding；反之亦然
+    n_en, n_zh = len(en_sents), len(zh_pool)
+    if n_en <= n_zh:
+        row_ind, col_ind = linear_sum_assignment(-sim[:, :n_en].T) if n_zh >= n_en else (np.arange(n_en), np.zeros(n_en, dtype=int))
+        # 用匈牙利算法：每个英文找一个中文
+        cost = -sim[:, :n_zh]
+        if n_en > n_zh:
+            # 补padding
+            padding = np.zeros((n_en, n_en - n_zh))
+            cost = np.hstack([cost, padding])
+        row_ind, col_ind = linear_sum_assignment(cost)
+        result = []
+        for ri, ci in zip(row_ind, col_ind):
+            if ci < n_zh:
+                result.append((en_sents[ri], zh_pool[ci]))
+            else:
+                result.append((en_sents[ri], ''))
+        return result
+    else:
+        cost = -sim[:n_en, :]
+        row_ind, col_ind = linear_sum_assignment(cost)
+        return [(en_sents[ri], zh_pool[ci] if ci < n_zh else '') for ri, ci in zip(row_ind, col_ind)]
+
+
 def do_alignment_and_audit():
-    """句级对齐：阿里云翻译做探针，按翻译字数在IMA中定位+标点截止。"""
+    """句级对齐：sentence-transformers 跨语言语义模型做全局最优对齐。"""
     global pairs, title_cn
     amruta_sents = split_sentences(content)
     if not amruta_sents:
         return
-    # 拼接IMA中文全文（跳过前2对头部元信息）
-    all_zh = "".join(pairs[pi][1] for pi in range(2, len(pairs)) if pi < len(pairs))
-    aligned = []
-    total = len(amruta_sents)
-    for i, sent in enumerate(amruta_sents):
-        aliyun_zh = aliyun_translate_title(sent)
-        if not aliyun_zh:
-            aligned.append([sent, ''])
-            continue
-        # 用阿里云翻译前5个字在 all_zh 中定位
-        probe = aliyun_zh[:5].strip()
-        pos = all_zh.find(probe)
-        if pos < 0:
-            probe = aliyun_zh[:3].strip()
-            pos = all_zh.find(probe)
-        if pos >= 0:
-            # 取阿里云翻译字数个中文字符
-            end = pos + len(aliyun_zh)
-            # 对齐到最近的逗号或句号
-            best_end = end
-            for p in ['。', '，']:
-                ppos = all_zh.find(p, end - 2)
-                if ppos >= 0 and ppos < best_end + 8:
-                    best_end = max(best_end, ppos + 1)
-            # 但不要超过下一句阿里云翻译的起始位置
-            if i < total - 1:
-                next_aliyun = aliyun_translate_title(amruta_sents[i + 1])
-                if next_aliyun:
-                    next_probe = next_aliyun[:5].strip()
-                    next_pos = all_zh.find(next_probe, pos + 1)
-                    if next_pos > pos and next_pos < best_end:
-                        best_end = next_pos
-            final_zh = all_zh[pos:best_end]
-        else:
-            final_zh = ''
-        aligned.append([sent, final_zh.strip()])
-        if (i + 1) % 5 == 0:
-            print(f"[translate] 阿里云翻译进度: {i+1}/{total}")
-    print(f"[translate_article] 阿里云探针IMA定位: {len(aligned)} 句")
-    pairs = aligned
+    # 拼接IMA中文全文（跳过前2对头部元信息），按逗号句号切分中文子句
+    zh_pool = []
+    for pi in range(2, len(pairs)):
+        zp = pairs[pi][1]
+        for zs in re.split(r'[。！？，]', zp):
+            zs = zs.strip()
+            if len(zs) > 3:
+                zh_pool.append(zs)
+    if not zh_pool:
+        zh_pool = [pairs[pi][1] for pi in range(2, len(pairs)) if pairs[pi][1].strip()]
+    if not zh_pool:
+        pairs = [[s, ''] for s in amruta_sents]
+        print("[translate_article] IMA中文池为空")
+        return
+    # 用语义模型对齐
+    print(f"[translate_article] 对齐: {len(amruta_sents)}句英文 → {len(zh_pool)}句中文字句")
+    aligned_pairs = _align_by_semantics(amruta_sents, zh_pool)
+    pairs = [list(p) for p in aligned_pairs]
     cn_count = sum(1 for _, zh in pairs if zh.strip())
-    print(f"[translate_article] 句级对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
+    print(f"[translate_article] 语义对齐完成，共 {len(pairs)} 句，{cn_count} 句有中文")
 
 # ================================================================== #
 
