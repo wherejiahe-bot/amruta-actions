@@ -2688,10 +2688,11 @@ def do_alignment_and_audit():
         pairs = [[s, ""] for s in amruta_sents]
         return
 
-    # Phase 3: lingtrain-aligner对齐
+    # Phase 3: lingtrain-aligner 对齐 (使用 get_sim_matrix + best_per_row_with_ones)
     aligned = []
     try:
-        from lingtrain_aligner import aligner as lingtrain_aligner
+        from lingtrain_aligner.aligner import get_sim_matrix, best_per_row_with_ones
+        from lingtrain_aligner.model_dispatcher import sentence_transformers_model_labse
 
         # 为每句EN找精确段落，构建src/tgt
         zh_by_para = {}
@@ -2711,56 +2712,55 @@ def do_alignment_and_audit():
             zh_list = zh_by_para.get(pi, [])
             tgt_lines.extend(zh_list)
 
-        src_text = "\n".join(src_lines)
-        tgt_text = "\n".join(tgt_lines)
+        print(f'[translate] -> lingtrain-aligner: {len(src_lines)}EN句 vs {len(tgt_lines)}ZH句')
 
-        print(f"[translate] -> lingtrain-aligner: {len(src_lines)}EN句 vs {len(tgt_lines)}ZH句")
-
-        # Use Lingtrain Aligner with pre-split sentences
-        result = lingtrain_aligner.align(
-            src_text,
-            tgt_text,
-            model_name="LaBSE",
-            split_sentences=False,  # we pre-split
-            max_align=5,
-            window=10,
-            thresh=0.6
+        # 使用 LaBSE 模型计算 embedding
+        vec_src = sentence_transformers_model_labse.embed(
+            src_lines, batch_size=32, normalize_embeddings=True,
+            show_progress_bar=False, lang='en'
+        )
+        vec_tgt = sentence_transformers_model_labse.embed(
+            tgt_lines, batch_size=32, normalize_embeddings=True,
+            show_progress_bar=False, lang='zh'
         )
 
-        # Result is list of alignment pairs: [{'src':..., 'tgt':..., 'score':...}]
-        # Map each EN sentence to its matched ZH
-        zh_used = set()
-        for pair in result:
-            src = pair.get('src', '').strip()
-            tgt = pair.get('tgt', '').strip()
-            score = pair.get('score', 0)
-            
-            if not src:
-                continue  # pure ZH pair, skip
-            
-            # Find which EN sentence this src corresponds to
-            for si, en_sent in enumerate(amruta_sents):
-                if en_sent.strip() == src:
-                    if tgt and score >= 0.4:
-                        aligned.append([en_sent, tgt, "IMA"])
-                    else:
-                        aliyun_zh = aliyun_translate_title(en_sent) or ""
-                        aligned.append([en_sent, aliyun_zh, "aliyun"])
-                    break
+        # 计算相似度矩阵
+        sim_matrix = get_sim_matrix(vec_src, vec_tgt, window=10)
 
-        print(f"[translate] lingtrain-aligner pairs: {len(result)}组")
+        # 取每行最佳匹配
+        best_idx = best_per_row_with_ones(sim_matrix)
+
+        # 映射 EN→ZH
+        zh_used = set()
+        for ei, en_sent in enumerate(amruta_sents):
+            ei_idx = best_idx[ei] if ei < len(best_idx) else -1
+            if ei_idx >= 0 and ei_idx < len(tgt_lines):
+                tgt = tgt_lines[ei_idx]
+                # 计算实际相似度
+                score = float(sim_matrix[ei, ei_idx]) if ei_idx < sim_matrix.shape[1] else 0
+                if tgt.strip() and score >= 0.3:
+                    aligned.append([en_sent, tgt, 'IMA'])
+                else:
+                    aliyun_zh = aliyun_translate_title(en_sent) or ''
+                    aligned.append([en_sent, aliyun_zh, 'aliyun'])
+            else:
+                aliyun_zh = aliyun_translate_title(en_sent) or ''
+                aligned.append([en_sent, aliyun_zh, 'aliyun'])
+
+        print(f'[translate] lingtrain-aligner pairs: {len(best_idx)}组')
 
     except ImportError as e:
-        print(f"[translate] lingtrain-aligner缺依赖: {e}")
+        print(f'[translate] lingtrain-aligner缺依赖: {e}')
         for sent in amruta_sents:
-            zh = aliyun_translate_title(sent) or ""
-            aligned.append([sent, zh, "aliyun"])
+            zh = aliyun_translate_title(sent) or ''
+            aligned.append([sent, zh, 'aliyun'])
 
     except Exception as e:
-        print(f"[translate] lingtrain-aligner失败 ({e})，回退阿里云翻译")
+        print(f'[translate] lingtrain-aligner失败 ({e})，回退阿里云翻译')
         for sent in amruta_sents:
-            zh = aliyun_translate_title(sent) or ""
-            aligned.append([sent, zh, "aliyun"])
+            zh = aliyun_translate_title(sent) or ''
+            aligned.append([sent, zh, 'aliyun'])
+
     print(f"[translate] === 对齐报告 ===")
     for i, (en, zh, src) in enumerate(aligned):
         print(f"  [{i:2d}] {src:>6} | {en[:50]}... | {zh[:50]}...")
