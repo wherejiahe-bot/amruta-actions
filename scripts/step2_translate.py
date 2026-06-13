@@ -2968,9 +2968,10 @@ lines = []
 
 # 将多对一对齐的 EN 句合并到一个段落
 # 逻辑：如果多句 EN 匹配到同一句 ZH，这些 EN 句放在一起
-# 如果 EN 没有匹配 ZH，单独一行
+# 如果 EN 没有匹配 ZH，单独一行（无中文）
 final_pairs = []
 en_buffer = []
+zh_for_buffer = ''  # 记录 buffer 对应的中文
 for en, zh in pairs:
     en = str(en).strip() if en else ''
     zh = str(zh).strip() if zh else ''
@@ -2978,18 +2979,34 @@ for en, zh in pairs:
         continue
     if zh:
         if en:
-            en_buffer.append(en)
+            if en_buffer:
+                # 同一句 ZH，追加英文
+                en_buffer.append(en)
+                zh_for_buffer = zh
+            else:
+                # 新的一句 ZH，先输出之前的 buffer
+                if en_buffer:
+                    final_pairs.append((' '.join(en_buffer), zh_for_buffer))
+                en_buffer = [en]
+                zh_for_buffer = zh
+        else:
+            # EN 为空但有 ZH，直接输出
+            if en_buffer:
+                final_pairs.append((' '.join(en_buffer), zh_for_buffer))
+                en_buffer = []
+            final_pairs.append(('', zh))
     else:
         # EN 没有对应 ZH，先输出之前的 buffer
         if en_buffer:
-            final_pairs.append((' '.join(en_buffer), ''))
+            final_pairs.append((' '.join(en_buffer), zh_for_buffer))
             en_buffer = []
+            zh_for_buffer = ''
         if en:
             final_pairs.append((en, ''))
 
 # 输出剩余的 buffer
 if en_buffer:
-    final_pairs.append((' '.join(en_buffer), ''))
+    final_pairs.append((' '.join(en_buffer), zh_for_buffer))
 
 # 生成 HTML（紧凑段落排版）
 for en, zh in final_pairs:
@@ -3000,6 +3017,8 @@ for en, zh in final_pairs:
         lines.append(html_line)
     elif en:
         lines.append('<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">' + en + '</p>')
+    elif zh:
+        lines.append('<p style="margin:0 0 14px 0;">' + zh + '</p>')
 
 pair_html = chr(10).join(lines)
 
