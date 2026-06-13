@@ -2750,8 +2750,8 @@ def do_alignment_and_audit():
 
         print(f"[translate] lingtrain-aligner pairs: {len(result)}组")
 
-    except ImportError:
-        print(f"[translate] lingtrain-aligner导入失败: {ie}")
+    except ImportError as e:
+        print(f"[translate] lingtrain-aligner缺依赖: {e}")
         for sent in amruta_sents:
             zh = aliyun_translate_title(sent) or ""
             aligned.append([sent, zh, "aliyun"])
