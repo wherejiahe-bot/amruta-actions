@@ -2688,10 +2688,10 @@ def do_alignment_and_audit():
         pairs = [[s, ""] for s in amruta_sents]
         return
 
-    # Phase 3: Bertalign对齐
+    # Phase 3: lingtrain-aligner对齐
     aligned = []
     try:
-        from bertalign import Bertalign
+        from lingtrain_aligner import aligner as lingtrain_aligner
 
         # 为每句EN找精确段落，构建src/tgt
         zh_by_para = {}
@@ -2714,41 +2714,53 @@ def do_alignment_and_audit():
         src_text = "\n".join(src_lines)
         tgt_text = "\n".join(tgt_lines)
 
-        print(f"[translate] -> Bertalign: {len(src_lines)}EN句 vs {len(tgt_lines)}ZH句")
+        print(f"[translate] -> lingtrain-aligner: {len(src_lines)}EN句 vs {len(tgt_lines)}ZH句")
 
-        aligner = Bertalign(src_text, tgt_text, is_split=True)
-        aligner.align_sents()
+        # Use Lingtrain Aligner with pre-split sentences
+        result = lingtrain_aligner.align(
+            src_text,
+            tgt_text,
+            model_name="LaBSE",
+            split_sentences=False,  # we pre-split
+            max_align=5,
+            window=10,
+            thresh=0.6
+        )
 
+        # Result is list of alignment pairs: [{'src':..., 'tgt':..., 'score':...}]
+        # Map each EN sentence to its matched ZH
         zh_used = set()
-        for bead in aligner.result:
-            src_idxs = bead[0]
-            tgt_idxs = bead[1]
-            if not src_idxs:
-                continue
-            for si in src_idxs:
-                if si < len(amruta_sents):
-                    en_sent = amruta_sents[si]
-                    if tgt_idxs:
-                        zh_parts = [tgt_lines[ti] for ti in tgt_idxs if ti < len(tgt_lines)]
-                        aligned.append([en_sent, "".join(zh_parts), "IMA"])
+        for pair in result:
+            src = pair.get('src', '').strip()
+            tgt = pair.get('tgt', '').strip()
+            score = pair.get('score', 0)
+            
+            if not src:
+                continue  # pure ZH pair, skip
+            
+            # Find which EN sentence this src corresponds to
+            for si, en_sent in enumerate(amruta_sents):
+                if en_sent.strip() == src:
+                    if tgt and score >= 0.4:
+                        aligned.append([en_sent, tgt, "IMA"])
                     else:
                         aliyun_zh = aliyun_translate_title(en_sent) or ""
                         aligned.append([en_sent, aliyun_zh, "aliyun"])
+                    break
 
-        print(f"[translate] Bertalign beads: {len(aligner.result)}组")
+        print(f"[translate] lingtrain-aligner pairs: {len(result)}组")
 
     except ImportError:
-        print(f"[translate] Bertalign未安装，回退阿里云翻译")
+        print(f"[translate] lingtrain-aligner未安装，回退阿里云翻译")
         for sent in amruta_sents:
             zh = aliyun_translate_title(sent) or ""
             aligned.append([sent, zh, "aliyun"])
 
     except Exception as e:
-        print(f"[translate] Bertalign失败 ({e})，回退阿里云翻译")
+        print(f"[translate] lingtrain-aligner失败 ({e})，回退阿里云翻译")
         for sent in amruta_sents:
             zh = aliyun_translate_title(sent) or ""
             aligned.append([sent, zh, "aliyun"])
-
     print(f"[translate] === 对齐报告 ===")
     for i, (en, zh, src) in enumerate(aligned):
         print(f"  [{i:2d}] {src:>6} | {en[:50]}... | {zh[:50]}...")
