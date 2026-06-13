@@ -10810,209 +10810,59 @@ def do_alignment_and_audit():
 
 
 
-        src_lines = []
+        # 逐句段落受限匹配：每个EN只在自己对应段落里找最佳ZH
+        # 不构造全局tgt_lines，改为对每个EN独立匹配
 
 
+        # ============ 逐句段落受限匹配 ============
+        # 每个EN句只在自己的对应段落里找最佳ZH句（最相似的前K条）
+        K = 3  # 每个EN最多考虑前K条最相似的ZH
 
-        tgt_lines = []
-
-
-
-        for ei, sent in enumerate(amruta_sents):
-
-
-
-            constrained = pairs[first_pi:last_pi+1]
-
-
-
-            pi_inner = best_para_for_sent(sent, constrained)
-
-
-
-            pi = first_pi + pi_inner
-
-
-
-            src_lines.append(sent)
-
-
-
-            zh_list = zh_by_para.get(pi, [])
-
-
-
-            tgt_lines.extend(zh_list)
-
-
-
-
-
-
-
-        print(f'[translate] -> lingtrain-aligner: {len(src_lines)}EN句 vs {len(tgt_lines)}ZH句')
-
-
-
-
-
-
-
-        # 使用 LaBSE 模型计算 embedding（768维，L2归一化）
-
-
-
-        vec_src = sentence_transformers_model_labse.embed(
-
-
-
-            src_lines, batch_size=32, normalize_embeddings=True,
-
-
-
-            show_progress_bar=False, lang='en'
-
-
-
-        )
-
-
-
-        vec_tgt = sentence_transformers_model_labse.embed(
-
-
-
-            tgt_lines, batch_size=32, normalize_embeddings=True,
-
-
-
-            show_progress_bar=False, lang='zh'
-
-
-
-        )
-
-
-
-
-
-
-
-        # 直接用余弦相似度（LaBSE向量已L2归一化，点积=余弦相似度）
-
-
-
-        sim_matrix = np.dot(vec_src, vec_tgt.T)
-
-
-
-        print(f'[translate] sim_matrix shape: {sim_matrix.shape}, range: [{sim_matrix.min():.4f}, {sim_matrix.max():.4f}]')
-
-
-
-
-
-
-
-        # 用 DP 对齐（复用已有的 dp_align 函数）
-
-
-
-        aligned_pairs = dp_align(sim_matrix, skip_cost=0.5)
-
-
-
-        print(f'[translate] dp_align result: {len(aligned_pairs)} matched pairs')
-
-
-
-
-
-
-
-        # 输出对齐详情
-
-
-
-        for en_idx, zh_idx, score in aligned_pairs:
-
-
-
-            if zh_idx is not None:
-
-
-
-                print(f'  [align] EN[{en_idx}] <-> ZH[{zh_idx}] score={score:.4f}')
-
-
-
-
-
-
-
-        # 映射 EN→ZH
-
-
+        para_vec_cache = {}  # pi -> vec (缓存段落向量)
 
         for ei, en_sent in enumerate(amruta_sents):
+            constrained = pairs[first_pi:last_pi+1]
+            pi_inner = best_para_for_sent(en_sent, constrained)
+            pi = first_pi + pi_inner
 
-
-
-            found = False
-
-
-
-            for en_idx, zh_idx, score in aligned_pairs:
-
-
-
-                if en_idx == ei:
-
-
-
-                    if zh_idx is not None and score >= 0.4:
-
-
-
-                        aligned.append([en_sent, tgt_lines[zh_idx], 'IMA'])
-
-
-
-                    else:
-
-
-
-                        aliyun_zh = aliyun_translate_title(en_sent) or ''
-
-
-
-                        aligned.append([en_sent, aliyun_zh, 'aliyun'])
-
-
-
-                    found = True
-
-
-
-                    break
-
-
-
-            if not found:
-
-
-
+            zh_list = zh_by_para.get(pi, [])
+            if not zh_list:
+                # 该段落无ZH -> 阿里云兜底
                 aliyun_zh = aliyun_translate_title(en_sent) or ''
-
-
-
                 aligned.append([en_sent, aliyun_zh, 'aliyun'])
+                print(f'  [align] EN[{ei}] -> 段落[{pi}]无ZH, 阿里云兜底')
+                continue
 
+            # 段落ZH向量化（缓存避免重复）
+            if pi not in para_vec_cache:
+                para_vec_cache[pi] = sentence_transformers_model_labse.embed(
+                    zh_list, batch_size=32, normalize_embeddings=True,
+                    show_progress_bar=False, lang='zh'
+                )
+            para_vec = para_vec_cache[pi]
 
+            # EN句embedding
+            en_vec = sentence_transformers_model_labse.embed(
+                [en_sent], batch_size=1, normalize_embeddings=True,
+                show_progress_bar=False, lang='en'
+            )[0]
 
+            # 余弦相似度
+            sims = np.dot(para_vec, en_vec)
+            top_indices = np.argsort(sims)[::-1][:K]
 
+            # 取最高分且>=0.4的ZH
+            best_idx = top_indices[0]
+            best_score = sims[best_idx]
 
-
+            if best_score >= 0.4:
+                aligned.append([en_sent, zh_list[best_idx], 'IMA'])
+                print(f'  [align] EN[{ei}] <-> 段落[{pi}]ZH[{best_idx}] score={best_score:.4f} "{zh_list[best_idx][:50]}"')
+            else:
+                # 最佳ZH相似度不够，阿里云兜底
+                aliyun_zh = aliyun_translate_title(en_sent) or ''
+                aligned.append([en_sent, aliyun_zh, 'aliyun'])
+                print(f'  [align] EN[{ei}] <-> 段落[{pi}]ZH[{best_idx}] score={best_score:.4f} < 0.4, 阿里云兜底')
 
     except ImportError as e:
 
@@ -11772,53 +11622,20 @@ if not pairs:
 
     print(f"[translate_article] No Chinese, EN only: {len(pairs)} paras")# ============ 标题翻译 + D Link ============ #
 
+    # 标题翻译：先从 pairs 找官方翻译，找不到再阿里云
+    if title_cn == title_en or not any("\u4e00" <= c <= "\u9fff" for c in title_cn):
+        # 先从 pairs 找标题关键词对应的官方翻译
+        candidate = extract_title_cn_from_pairs(pairs, title_en)
+        if candidate:
+            title_cn = candidate
+            print(f'[translate_article] 标题翻译: 从 pairs 找到官方翻译 "{candidate}"')
+        else:
+            # 阿里云兜底
+            t = aliyun_translate_title(title_en)
+            if t:
+                title_cn = t
+                print(f'[translate_article] 标题翻译: 阿里云兜底 "{t}"')
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-if title_cn == title_en or not any("\u4e00" <= c <= "\u9fff" for c in title_cn):
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    t = aliyun_translate_title(title_en)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    if t: title_cn = t
 
 
 
