@@ -2688,10 +2688,9 @@ def do_alignment_and_audit():
         pairs = [[s, ""] for s in amruta_sents]
         return
 
-    # Phase 3: lingtrain-aligner 对齐 (使用 get_sim_matrix + best_per_row_with_ones)
+    # Phase 3: lingtrain-aligner 对齐 (直接用 LaBSE 余弦相似度)
     aligned = []
     try:
-        from lingtrain_aligner.aligner import get_sim_matrix, best_per_row_with_ones
         from lingtrain_aligner.model_dispatcher import sentence_transformers_model_labse
 
         # 为每句EN找精确段落，构建src/tgt
@@ -2714,7 +2713,7 @@ def do_alignment_and_audit():
 
         print(f'[translate] -> lingtrain-aligner: {len(src_lines)}EN句 vs {len(tgt_lines)}ZH句')
 
-        # 使用 LaBSE 模型计算 embedding
+        # 使用 LaBSE 模型计算 embedding（768维，L2归一化）
         vec_src = sentence_transformers_model_labse.embed(
             src_lines, batch_size=32, normalize_embeddings=True,
             show_progress_bar=False, lang='en'
@@ -2724,30 +2723,34 @@ def do_alignment_and_audit():
             show_progress_bar=False, lang='zh'
         )
 
-        # 计算相似度矩阵
-        sim_matrix = get_sim_matrix(vec_src, vec_tgt, window=10)
+        # 直接用余弦相似度（LaBSE向量已L2归一化，点积=余弦相似度）
+        sim_matrix = np.dot(vec_src, vec_tgt.T)
+        print(f'[translate] sim_matrix shape: {sim_matrix.shape}, range: [{sim_matrix.min():.4f}, {sim_matrix.max():.4f}]')
 
-        # 取每行最佳匹配
-        best_idx = best_per_row_with_ones(sim_matrix)
+        # 用 DP 对齐（复用已有的 dp_align 函数）
+        aligned_pairs = dp_align(sim_matrix, skip_cost=0.5)
+        print(f'[translate] dp_align result: {len(aligned_pairs)} matched pairs')
+
+        # 输出对齐详情
+        for en_idx, zh_idx, score in aligned_pairs:
+            if zh_idx is not None:
+                print(f'  [align] EN[{en_idx}] <-> ZH[{zh_idx}] score={score:.4f}')
 
         # 映射 EN→ZH
-        zh_used = set()
         for ei, en_sent in enumerate(amruta_sents):
-            ei_idx = best_idx[ei] if ei < len(best_idx) else -1
-            if ei_idx >= 0 and ei_idx < len(tgt_lines):
-                tgt = tgt_lines[ei_idx]
-                # 计算实际相似度
-                score = float(sim_matrix[ei, ei_idx]) if ei_idx < sim_matrix.shape[1] else 0
-                if tgt.strip() and score >= 0.3:
-                    aligned.append([en_sent, tgt, 'IMA'])
-                else:
-                    aliyun_zh = aliyun_translate_title(en_sent) or ''
-                    aligned.append([en_sent, aliyun_zh, 'aliyun'])
-            else:
+            found = False
+            for en_idx, zh_idx, score in aligned_pairs:
+                if en_idx == ei:
+                    if zh_idx is not None and score >= 0.4:
+                        aligned.append([en_sent, tgt_lines[zh_idx], 'IMA'])
+                    else:
+                        aliyun_zh = aliyun_translate_title(en_sent) or ''
+                        aligned.append([en_sent, aliyun_zh, 'aliyun'])
+                    found = True
+                    break
+            if not found:
                 aliyun_zh = aliyun_translate_title(en_sent) or ''
                 aligned.append([en_sent, aliyun_zh, 'aliyun'])
-
-        print(f'[translate] lingtrain-aligner pairs: {len(best_idx)}组')
 
     except ImportError as e:
         print(f'[translate] lingtrain-aligner缺依赖: {e}')
