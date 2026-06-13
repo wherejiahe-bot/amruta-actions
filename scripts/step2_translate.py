@@ -2445,8 +2445,10 @@ def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
 def parse_ima_bilingual_md(full_text):
     """
     解析 IMA 知识库的中英双语 Markdown 文档。
+    支持两种格式：
+      1. interleaved（主流）：EN段落→ZH段落→EN段落→ZH段落...（空行分隔）
+      2. inline（少数）：EN语句+ZH翻译 在同一段落
     提取 YAML frontmatter 中的 source 字段作为底部链接。
-    正文部分按 EN+ZH inline 格式解析，返回 (source_url, [(en, zh), ...])。
     """
     source_url = ""
     body = full_text
@@ -2466,41 +2468,68 @@ def parse_ima_bilingual_md(full_text):
     # Step 2: 按双换行切段落
     blocks = [b.strip() for b in re.split(r'\n{2,}', body) if b.strip()]
 
-    # Step 3: 跳过前几个元信息段（非正文）
+    def has_cn(b):
+        return sum(1 for c in b if '\u4e00' <= c <= '\u9fff') >= 3
+
+    def plain_en(b):
+        """纯英文段（cn<3 且 单词数>5）"""
+        cn = sum(1 for c in b if '\u4e00' <= c <= '\u9fff')
+        return cn < 3 and len(re.findall(r'\b\w+\b', b)) > 5
+
+    def is_meta(b):
+        """元信息段（日期行、Talk Language、译注等）"""
+        if re.match(r'^\d{1,2}\s+\w+\s+\d{4}', b): return True
+        if any(kw in b for kw in ['Talk Language', 'Transcript', 'VERIFIED', 'NEEDED',
+                                   '以下翻译', '供大家参考', 'subtitles', 'Subtitles']):
+            return True
+        return False
+
+    # Step 3: 跳过元信息段，找到正文起点（第一个纯英文段落）
     start = 0
     for i, b in enumerate(blocks):
-        cn = sum(1 for c in b if '\u4e00' <= c <= '\u9fff')
-        en_len = len(re.findall(r'\b\w+\b', b))
-        # 跳过：纯中文段 / 短段落 / 只有元信息无正文
-        if cn < 3 and en_len > 5 and sum(1 for c in b if c == '.') >= 2:
+        if is_meta(b):
+            continue
+        if plain_en(b):
             start = i
             break
 
-    # Step 4: 解析每段成 [en, zh] 对
+    # Step 4: interleaved 格式解析（EN→ZH 段落交替）
     result = []
-    for block in blocks[start:]:
-        cn = sum(1 for c in block if '\u4e00' <= c <= '\u9fff')
-        if cn == 0:
-            # 纯英文段
-            result.append([block, ""])
-            continue
+    i = start
+    while i < len(blocks):
+        b = blocks[i]
 
-        # 尝试先用句尾+中文开头拆分
-        m = re.split(r'(?<=[.!?])\s*(?=[\u4e00-\u9fff])', block, maxsplit=1)
-        if len(m) >= 2:
-            en_part, zh_part = m[0].strip(), m[1].strip()
-            if en_part and zh_part:
-                result.append([en_part, zh_part])
-                continue
+        if plain_en(b):
+            # EN 段落→收集后续所有 ZH 段落作为翻译
+            en_text = b
+            zh_texts = []
+            i += 1
+            while i < len(blocks) and has_cn(blocks[i]) and not plain_en(blocks[i]):
+                zh_texts.append(blocks[i])
+                i += 1
+            zh_combined = "。".join(zh_texts) if zh_texts else ""
+            result.append([en_text, zh_combined])
 
-        # 回退：找第一个中文字符位置
-        for i, c in enumerate(block):
-            if '\u4e00' <= c <= '\u9fff':
-                en_part = block[:i].strip()
-                zh_part = block[i:].strip()
-                if en_part:
-                    result.append([en_part, zh_part])
-                break
+        elif has_cn(b):
+            # 中文段前面无对应英文 → 尝试 inline 拆分
+            m = re.split(r'(?<=[.!?])\s*(?=[\u4e00-\u9fff])', b, maxsplit=1)
+            if len(m) >= 2 and m[0].strip() and m[1].strip():
+                result.append([m[0].strip(), m[1].strip()])
+            else:
+                # 纯中文，回退：找第一个中文字符位置
+                for ci, c in enumerate(b):
+                    if '\u4e00' <= c <= '\u9fff':
+                        en_part = b[:ci].strip()
+                        zh_part = b[ci:].strip()
+                        if en_part:
+                            result.append([en_part, zh_part])
+                        else:
+                            result.append(["", b])
+                        break
+            i += 1
+        else:
+            # 短段落/无关信息 → 跳过
+            i += 1
 
     if not result:
         return source_url, []
