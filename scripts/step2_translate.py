@@ -2588,348 +2588,96 @@ except:
 
 
 def do_alignment_and_audit():
-
-
-
-
-
-
-
-    """BGE句级对齐：IMA中文按句号切分，阈值0.4，低于阈值用阿里云"""
-
-
-
-
-
-
-
+    """句级对齐：段落锚定->切ZH句子池->阿里云探针->BGE中中匹配"""
     global pairs, title_cn
 
-
-
-
-
-
-
     amruta_sents = split_sentences(content)
-
-
-
-
-
-
-
     if not amruta_sents: return
-
-
-
-
-
-
 
     stopwords = {"that","this","with","have","your","from","they","them","will","what","when","into","been","were","also","just","more","than","then","there","their","which","still","only","such","very","even","does","dont","cant","wont","should"}
 
-
-
-
-
-
-
     def best_para_for_sent(en_s, lst):
-
-
-
-
-
-
-
         kws = set(re.findall(r"[a-z]{4,}", en_s.lower())) - stopwords
-
-
-
-
-
-
-
         best_sc, best_pi = 0, 0
-
-
-
-
-
-
-
         for pi, (ep, zp) in enumerate(lst):
-
-
-
-
-
-
-
             if not zp.strip(): continue
-
-
-
-
-
-
-
             epw = set(re.findall(r"[a-z]{4,}", ep.lower())) - stopwords
-
-
-
-
-
-
-
             if not epw: continue
-
-
-
-
-
-
-
             sc = len(kws & epw) / max(len(kws), 1) if kws else 0
-
-
-
-
-
-
-
             if sc > best_sc: best_sc, best_pi = sc, pi
-
-
-
-
-
-
-
         return best_pi
 
-
-
-
-
-
-
-    # If Chinese-only mode (all en are empty), skip para anchoring, use all sentences
+    # Phase 1: 段落锚定
     all_en_empty = all(not en.strip() for en, _ in pairs)
     if all_en_empty:
-        first_pi = 0
-        last_pi = len(pairs) - 1
+        first_pi, last_pi = 0, len(pairs)-1
     else:
         first_pi = max(best_para_for_sent(amruta_sents[0], pairs), 2)
         last_pi = best_para_for_sent(amruta_sents[-1], pairs)
-
-
-
-
-
-
-
-    last_pi = best_para_for_sent(amruta_sents[-1], pairs)
-
-
-
-
-
-
-
-    if last_pi < first_pi: last_pi = first_pi
-
-
-
-
-
-
-
-    for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
-
-
-
-
-
-
-
-        if pairs[pi][1].strip(): last_pi = pi
-
-
-
-
-
-
+        if last_pi < first_pi: last_pi = first_pi
+        for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
+            if pairs[pi][1].strip(): last_pi = pi
 
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
 
-
-
-
-
-
-
-    # 按句号切分中文子句（不按逗号），长度>=2
-
-
-
+    # Phase 2: 从锚定段落中收集所有ZH句子（不遗漏）
     zh_sents = []
-
-
-
-    para_indices = []
-
-
-
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
-
-
-
         zp = pairs[pi][1].strip()
-
-
-
         if len(zp) >= 2:
-
-
-
             sub_sents = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) >= 2]
-
-
-
             for ss in sub_sents:
+                zh_sents.append((ss, pi))
 
+    print(f"[translate] ZH句子池: {len(zh_sents)}句 来自段落{first_pi}~{last_pi}")
+    if not zh_sents:
+        pairs = [[s, ""] for s in amruta_sents]
+        return
 
+    # Phase 3: 阿里云探针（每句EN生成中文翻译）
+    aliyun_zhs = [aliyun_translate_title(s) for s in amruta_sents]
 
-                zh_sents.append(ss)
-
-
-
-                para_indices.append(pi)
-
-
-
-    if not zh_sents: pairs = [[s,""] for s in amruta_sents]; return
-
-
-
-    # BGE英-中匹配：阈值0.4，低于阈值用阿里云
-
-
-
+    # Phase 4: BGE中中匹配（阿里云ZH vs IMA ZH）
+    aligned = []
+    zh_texts = [z for z, _ in zh_sents]
     used = set()
 
-
-
-    aligned = []
-
-
-
     if _bg is not None:
+        en_vecs = _bg.encode(aliyun_zhs, normalize_embeddings=True, show_progress_bar=False)
+        zh_vecs = _bg.encode(zh_texts, normalize_embeddings=True, show_progress_bar=False)
 
-
-
-        en_vecs = _bg.encode(amruta_sents, normalize_embeddings=True, show_progress_bar=False)
-
-
-
-        zh_vecs = _bg.encode(zh_sents, normalize_embeddings=True, show_progress_bar=False)
-
-
-
+    print(f"[translate] === 对齐报告 ===")
     for i, sent in enumerate(amruta_sents):
-
-
-
-        aliyun_zh = aliyun_translate_title(sent)
-
-
-
-        if _bg is not None:
-
-
-
+        aliyun_zh = aliyun_zhs[i] or ""
+        if _bg is not None and aliyun_zh.strip():
             best_sc, best_zp, best_pi = -1, "", -1
-
-
-
-            for pi in range(len(zh_sents)):
-
-
-
+            for pi in range(len(zh_texts)):
                 if pi in used: continue
-
-
-
                 sc = float(np.dot(en_vecs[i], zh_vecs[pi]))
-
-
-
-                if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_sents[pi], pi
-
-
-
+                if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_texts[pi], pi
             if best_pi >= 0 and best_sc >= 0.4:
-
-
-
-                aligned.append([sent, best_zp])
-
-
-
+                aligned.append([sent, best_zp, "IMA"])
                 used.add(best_pi)
+                print(f"  [{i:2d}] IMA  sc={best_sc:.4f} | {sent[:50]}... | {best_zp[:50]}...")
+            else:
+                aligned.append([sent, aliyun_zh, "aliyun"])
+                print(f"  [{i:2d}] aliyun sc={best_sc if best_pi>=0 else 0:.4f} | {sent[:50]}... | {aliyun_zh[:50]}...")
+        else:
+            aligned.append([sent, aliyun_zh, "aliyun"])
+            print(f"  [{i:2d}] aliyun sc=- | {sent[:50]}... | {aliyun_zh[:50]}...")
 
-
-
-            else: aligned.append([sent, aliyun_zh or ""])
-
-
-
-        else: aligned.append([sent, aliyun_zh or ""])
-
-
-
-    pairs = [list(p) for p in aligned]
-
-
+    pairs = [[en, zh] for en, zh, _ in aligned]
 
     # 后处理
-
-
-
     for idx in range(len(pairs)):
-
-
-
         zh = pairs[idx][1]
-
-
-
         zh = zh.replace("左翼还是右翼", "偏左或偏右")
-
-
-
         zh = zh.replace("左翼或右翼", "偏左或偏右")
-
-
-
         pairs[idx][1] = zh
 
-
-
     cn = sum(1 for _,z in pairs if z.strip())
-
-
-
-    print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文")
-
-
-
-
-
-
-
+    ima_cn = sum(1 for _,_,s in aligned if s == "IMA")
+    print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文 (IMA: {ima_cn}, Aliyun: {len(aligned)-ima_cn})")
 def search_ima_kb(query_text, phase_name):
     global sahaja_link, pairs, title_cn
     cid = os.environ.get("IMA_CLIENT_ID", "")
