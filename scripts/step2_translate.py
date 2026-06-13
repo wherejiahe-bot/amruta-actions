@@ -12234,8 +12234,8 @@ def build_key_word_map_from_pairs(pairs_list):
         if not en_str or not zh_str:
             continue
         
-        en_kws = [w.strip(".,!"'-():").lower() for w in en_str.split() 
-                  if len(w.strip(".,!"'-():")) > 2 and w.strip(".,!"'-():").lower() not in stopwords]
+        en_kws = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split() 
+                  if len(w.strip(".!,:;!?()-_[]")) > 2 and w.strip(".!,:;!?()-_[]").lower() not in stopwords]
         if not en_kws:
             continue
         
@@ -12255,7 +12255,7 @@ def translate_title_with_word_map(en_title, pairs_list, word_map):
         return None
     
     en_words = en_title.split()
-    en_lower = [w.strip(".,!"'-():").lower() for w in en_words]
+    en_lower = [w.strip(".!,:;!?()-_[]").lower() for w in en_words]
     known_kws = [w for w in en_lower if w in word_map]
     if not known_kws:
         return None
@@ -12267,8 +12267,8 @@ def translate_title_with_word_map(en_title, pairs_list, word_map):
         if not en_str or not zh_str:
             continue
         
-        en_kws_found = [w.strip(".,!"'-():").lower() for w in en_str.split() 
-                        if w.strip(".,!"'-():").lower() in known_kws]
+        en_kws_found = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split() 
+                        if w.strip(".!,:;!?()-_[]").lower() in known_kws]
         if en_kws_found:
             candidates.append((en, zh, en_kws_found))
     
