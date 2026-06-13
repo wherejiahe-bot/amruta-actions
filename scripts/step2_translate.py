@@ -2834,24 +2834,37 @@ def search_ima_kb(query_text, phase_name):
         print(f'[translate_article] IMA KB fail: {e}')
         return False
 
-# ============ IMA KB Date-Based Search ============ #
+# ============ IMA KB Date-Based Search (with retries) ============ #
+MAX_RETRIES = 3
+
+def search_ima_kb_with_retry(query_text, phase_name):
+    """带重试机制的IMA知识库搜索"""
+    for attempt in range(MAX_RETRIES):
+        try:
+            result = search_ima_kb(query_text, phase_name)
+            if result:
+                print(f'[translate_article] {phase_name} succeeded on attempt {attempt+1}')
+                return True
+            else:
+                print(f'[translate_article] {phase_name} returned empty, retry {attempt+1}/{MAX_RETRIES}')
+        except Exception as e:
+            print(f'[translate_article] {phase_name} failed (attempt {attempt+1}/{MAX_RETRIES}): {e}')
+        
+        if attempt < MAX_RETRIES - 1:
+            import time
+            time.sleep(2)  # 等待2秒后重试
+    
+    print(f'[translate_article] {phase_name} FAILED after {MAX_RETRIES} attempts')
+    return False
+
 if not pairs:
     # Phase 1: search by date string (YYYY-MM-DD) - date_str = e.g. "1978-06-12"
-    phase1_ok = search_ima_kb(date_str, "Phase1(date)")
+    phase1_ok = search_ima_kb_with_retry(date_str, "Phase1(date)")
     
     # Phase 2: if empty, search by body content
     if not phase1_ok:
         print(f"[translate_article] Phase1 date search empty, retrying with body content...")
-        phase2_ok = search_ima_kb(content[:200], "Phase2(body)")
-
-
-
-
-
-
-
-# BGE alignment (only if IMA found pairs with Chinese)
-
+        phase2_ok = search_ima_kb_with_retry(content[:200], "Phase2(body)")
 
 
 if pairs and has_chinese(pairs):
