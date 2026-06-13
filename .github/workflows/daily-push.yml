@@ -24,6 +24,8 @@ jobs:
           key: align-models-v1
       - name: Install alignment deps
         run: pip install sentence-transformers numpy
+          git clone --depth 1 https://github.com/bfsujason/bertalign.git /tmp/bertalign
+          pip install -e /tmp/bertalign
 
       - name: Step2 - Search + Translate
         env:
