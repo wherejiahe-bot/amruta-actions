@@ -26,10 +26,10 @@ jobs:
         run: |
           pip install sentence-transformers numpy sentence-splitter googletrans
           git clone --depth 1 https://github.com/bfsujason/bertalign.git /tmp/bertalign
-          pip install -e /tmp/bertalign
 
       - name: Step2 - Search + Translate
         env:
+          PYTHONPATH: /tmp/bertalign
           IMA_CLIENT_ID: ${{ secrets.IMA_CLIENT_ID }}
           IMA_API_KEY: ${{ secrets.IMA_API_KEY }}
           IMA_KB_ID: ${{ secrets.IMA_KB_ID }}
