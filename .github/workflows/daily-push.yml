@@ -21,11 +21,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface/
-          key: align-models-v1
+          key: align-models-v2
+
       - name: Install alignment deps
         run: |
-          pip install sentence-transformers numpy sentence-splitter googletrans
-          git clone --depth 1 https://github.com/bfsujason/bertalign.git /tmp/bertalign
+          pip install sentence-transformers numpy lingtrain-aligner
+          python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('LaBSE')"
 
       - name: Step2 - Search + Translate
         env:
