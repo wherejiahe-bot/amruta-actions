@@ -2587,14 +2587,69 @@ except:
 
 
 
+def dp_align(sim_matrix, skip_cost=0.6):
+    """
+    Bertalign 式 DP 句对齐。
+    sim_matrix: (M, N) numpy array, cosine similarity in [0, 1]
+    skip_cost: 跳行/跳列的惩罚（默认0.6，对应相似度阈值0.4）
+    
+    Returns: list of (en_idx, zh_idx_or_None, similarity)
+    """
+    M, N = sim_matrix.shape
+    cost_mat = 1.0 - sim_matrix
+    INF = 1e9
+    
+    dp = np.full((M + 1, N + 1), INF, dtype=np.float64)
+    ch = np.zeros((M + 1, N + 1), dtype=np.int8)  # 0=start, 1=1:1, 2=skip_EN, 3=skip_ZH
+    
+    dp[0, 0] = 0.0
+    for i in range(1, M + 1):
+        dp[i, 0] = dp[i-1, 0] + skip_cost
+        ch[i, 0] = 2
+    for j in range(1, N + 1):
+        dp[0, j] = dp[0, j-1] + skip_cost
+        ch[0, j] = 3
+    
+    for i in range(1, M + 1):
+        for j in range(1, N + 1):
+            c11 = dp[i-1, j-1] + cost_mat[i-1, j-1]
+            c_skip_en = dp[i-1, j] + skip_cost
+            c_skip_zh = dp[i, j-1] + skip_cost
+            best = min(c11, c_skip_en, c_skip_zh)
+            dp[i, j] = best
+            if best == c11: ch[i, j] = 1
+            elif best == c_skip_en: ch[i, j] = 2
+            else: ch[i, j] = 3
+    
+    # Backtrack
+    result = []
+    i, j = M, N
+    while i > 0 and j > 0:
+        if ch[i, j] == 1:
+            result.append((i-1, j-1, float(sim_matrix[i-1, j-1])))
+            i -= 1; j -= 1
+        elif ch[i, j] == 2:
+            result.append((i-1, None, 0.0))
+            i -= 1
+        else:
+            j -= 1
+    while i > 0:
+        result.append((i-1, None, 0.0))
+        i -= 1
+    result.reverse()
+    return result
+
 def do_alignment_and_audit():
-    """句级对齐：段落锚定->切ZH句子池->阿里云探针->BGE中中匹配"""
+    """句级对齐：段落锚定->切ZH句子池->阿里云探针->BGE中中匹配->DP全局寻路"""
     global pairs, title_cn
 
     amruta_sents = split_sentences(content)
     if not amruta_sents: return
+    M = len(amruta_sents)
 
-    stopwords = {"that","this","with","have","your","from","they","them","will","what","when","into","been","were","also","just","more","than","then","there","their","which","still","only","such","very","even","does","dont","cant","wont","should"}
+    stopwords = {"that","this","with","have","your","from","they","them","will","what","when",
+                 "into","been","were","also","just","more","than","then","there","their",
+                 "which","still","only","such","very","even","does","dont","cant","wont","should"}
 
     def best_para_for_sent(en_s, lst):
         kws = set(re.findall(r"[a-z]{4,}", en_s.lower())) - stopwords
@@ -2637,34 +2692,31 @@ def do_alignment_and_audit():
     # Phase 3: 阿里云探针（每句EN生成中文翻译）
     aliyun_zhs = [aliyun_translate_title(s) for s in amruta_sents]
 
-    # Phase 4: BGE中中匹配（阿里云ZH vs IMA ZH）
+    # Phase 4: BGE中中匹配 + DP全局对齐
     aligned = []
     zh_texts = [z for z, _ in zh_sents]
-    used = set()
 
     if _bg is not None:
         en_vecs = _bg.encode(aliyun_zhs, normalize_embeddings=True, show_progress_bar=False)
         zh_vecs = _bg.encode(zh_texts, normalize_embeddings=True, show_progress_bar=False)
+        sim_matrix = np.dot(en_vecs, zh_vecs.T)
+        dp_result = dp_align(sim_matrix, skip_cost=0.6)
 
-    print(f"[translate] === 对齐报告 ===")
-    for i, sent in enumerate(amruta_sents):
-        aliyun_zh = aliyun_zhs[i] or ""
-        if _bg is not None and aliyun_zh.strip():
-            best_sc, best_zp, best_pi = -1, "", -1
-            for pi in range(len(zh_texts)):
-                if pi in used: continue
-                sc = float(np.dot(en_vecs[i], zh_vecs[pi]))
-                if sc > best_sc: best_sc, best_zp, best_pi = sc, zh_texts[pi], pi
-            if best_pi >= 0 and best_sc >= 0.4:
-                aligned.append([sent, best_zp, "IMA"])
-                used.add(best_pi)
-                print(f"  [{i:2d}] IMA  sc={best_sc:.4f} | {sent[:50]}... | {best_zp[:50]}...")
+        # 输出对齐报告
+        print(f"[translate] === 对齐报告 (DP) ===")
+        for en_idx, zh_idx, sim in dp_result:
+            en = amruta_sents[en_idx][:50]
+            if zh_idx is not None and sim >= 0.4:
+                zh = zh_texts[zh_idx][:50]
+                aligned.append([amruta_sents[en_idx], zh_texts[zh_idx], "IMA"])
+                print(f"  [{en_idx:2d}] IMA  sc={sim:.4f} | EN: {en}... | ZH: {zh}...")
             else:
-                aligned.append([sent, aliyun_zh, "aliyun"])
-                print(f"  [{i:2d}] aliyun sc={best_sc if best_pi>=0 else 0:.4f} | {sent[:50]}... | {aliyun_zh[:50]}...")
-        else:
-            aligned.append([sent, aliyun_zh, "aliyun"])
-            print(f"  [{i:2d}] aliyun sc=- | {sent[:50]}... | {aliyun_zh[:50]}...")
+                zh = (aliyun_zhs[en_idx] or "")[:50]
+                aligned.append([amruta_sents[en_idx], aliyun_zhs[en_idx] or "", "aliyun"])
+                print(f"  [{en_idx:2d}] aliyun sc={sim:.4f} | EN: {en}... | ZH: {zh}...")
+    else:
+        for i, sent in enumerate(amruta_sents):
+            aligned.append([sent, aliyun_zhs[i] or "", "aliyun"])
 
     pairs = [[en, zh] for en, zh, _ in aligned]
 
