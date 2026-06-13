@@ -25,7 +25,7 @@ jobs:
 
       - name: Install alignment deps
         run: |
-          pip install sentence-transformers numpy matplotlib lingtrain-aligner
+          pip install sentence-transformers numpy matplotlib dateparser lingtrain-aligner
           python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('LaBSE')"
 
       - name: Step2 - Search + Translate
