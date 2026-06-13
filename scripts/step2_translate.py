@@ -2675,40 +2675,70 @@ def do_alignment_and_audit():
 
     print(f"[translate] 锚定[{first_pi}~{last_pi}]")
 
-    # Phase 2: 从锚定段落中收集所有ZH句子（不遗漏）
-    zh_sents = []
+    # Phase 2: 为每句EN构建独立ZH搜索池（pi-3 ~ pi+5，多切不遗漏）
+    zh_by_para = {}  # pi -> [zh_texts]
     for pi in range(first_pi, min(last_pi+1, len(pairs))):
         zp = pairs[pi][1].strip()
         if len(zp) >= 2:
-            sub_sents = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) >= 2]
-            for ss in sub_sents:
-                zh_sents.append((ss, pi))
+            sents = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) >= 2]
+            if sents:
+                zh_by_para[pi] = sents
 
-    print(f"[translate] ZH句子池: {len(zh_sents)}句 来自段落{first_pi}~{last_pi}")
-    if not zh_sents:
+    # 为每句EN分配搜索范围（精确段落，不±，防错配）
+    en_pool_ranges = []  # [(en_idx, pi)]
+    for ei, sent in enumerate(amruta_sents):
+        # 只在锚定段落范围内搜索，防止短句匹配到元信息段落
+        constrained_pairs = pairs[first_pi:last_pi+1]
+        pi_inner = best_para_for_sent(sent, constrained_pairs)
+        pi = first_pi + pi_inner  # 转回全局段落索引
+        en_pool_ranges.append((ei, pi))
+
+    # 展平所有ZH句子并记录每句EN允许的索引
+    all_zh_texts = []
+    en_valid_indices = {}  # en_idx -> set of valid zh_indices
+    for ei, pi in en_pool_ranges:
+        valid = set()
+        if pi in zh_by_para:
+            for zt in zh_by_para[pi]:
+                idx = len(all_zh_texts)
+                all_zh_texts.append(zt)
+                valid.add(idx)
+        en_valid_indices[ei] = valid
+
+    print(f"[translate] ZH总池: {len(all_zh_texts)}句 (来自{len(zh_by_para)}个段落)")
+    for ei, pi in en_pool_ranges:
+        print(f"  EN[{ei:2d}] → para={pi}, 精确段落({len(en_valid_indices[ei])}句ZH)")
+    if not all_zh_texts:
         pairs = [[s, ""] for s in amruta_sents]
         return
 
     # Phase 3: 阿里云探针（每句EN生成中文翻译）
     aliyun_zhs = [aliyun_translate_title(s) for s in amruta_sents]
 
-    # Phase 4: BGE中中匹配 + DP全局对齐
+    # Phase 4: BGE中中匹配 + 掩码DP（只允许在各自搜索池内选）
     aligned = []
-    zh_texts = [z for z, _ in zh_sents]
 
     if _bg is not None:
         en_vecs = _bg.encode(aliyun_zhs, normalize_embeddings=True, show_progress_bar=False)
-        zh_vecs = _bg.encode(zh_texts, normalize_embeddings=True, show_progress_bar=False)
-        sim_matrix = np.dot(en_vecs, zh_vecs.T)
+        zh_vecs = _bg.encode(all_zh_texts, normalize_embeddings=True, show_progress_bar=False)
+        sim_matrix = np.dot(en_vecs, zh_vecs.T)  # (M, N_all)
+
+        # 掩码：不在EN搜索池内的ZH → 设相似度为-1（cost=2，远高于skip_cost=0.6）
+        for ei in range(len(amruta_sents)):
+            valid = en_valid_indices.get(ei, set())
+            for zi in range(sim_matrix.shape[1]):
+                if zi not in valid:
+                    sim_matrix[ei, zi] = -1.0
+
         dp_result = dp_align(sim_matrix, skip_cost=0.6)
 
         # 输出对齐报告
-        print(f"[translate] === 对齐报告 (DP) ===")
+        print(f"[translate] === 对齐报告 (DP+段落约束) ===")
         for en_idx, zh_idx, sim in dp_result:
             en = amruta_sents[en_idx][:50]
             if zh_idx is not None and sim >= 0.4:
-                zh = zh_texts[zh_idx][:50]
-                aligned.append([amruta_sents[en_idx], zh_texts[zh_idx], "IMA"])
+                zh = all_zh_texts[zh_idx][:50]
+                aligned.append([amruta_sents[en_idx], all_zh_texts[zh_idx], "IMA"])
                 print(f"  [{en_idx:2d}] IMA  sc={sim:.4f} | EN: {en}... | ZH: {zh}...")
             else:
                 zh = (aliyun_zhs[en_idx] or "")[:50]
