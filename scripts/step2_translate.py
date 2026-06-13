@@ -2991,10 +2991,13 @@ for en, zh in pairs:
 if en_buffer:
     final_pairs.append((' '.join(en_buffer), ''))
 
-# 生成 HTML
+# 生成 HTML（紧凑段落排版）
 for en, zh in final_pairs:
     if en and zh:
-        lines.append('<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en + '</p><p style="margin:0 0 14px 0;">' + zh + '</p>')
+        # EN 小灰色紧跟 ZH，EN 和 ZH 之间只隔 2px，段落间隔 14px
+        html_line = '<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en + '</p>'
+        html_line += '<p style="margin:0 0 14px 0;">' + zh + '</p>'
+        lines.append(html_line)
     elif en:
         lines.append('<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">' + en + '</p>')
 
