@@ -10859,10 +10859,52 @@ def do_alignment_and_audit():
                 aligned.append([en_sent, zh_list[best_idx], 'IMA'])
                 print(f'  [align] EN[{ei}] <-> 段落[{pi}]ZH[{best_idx}] score={best_score:.4f} "{zh_list[best_idx][:50]}"')
             else:
-                # 最佳ZH相似度不够，阿里云兜底
+                # 最佳ZH相似度不够，尝试与相邻句合并后重新匹配
                 aliyun_zh = aliyun_translate_title(en_sent) or ''
-                aligned.append([en_sent, aliyun_zh, 'aliyun'])
-                print(f'  [align] EN[{ei}] <-> 段落[{pi}]ZH[{best_idx}] score={best_score:.4f} < 0.4, 阿里云兜底')
+                
+                # Step 1: M:1 合并低分句
+                merged = False
+                if ei + 1 < len(amruta_sents):
+                    next_en = amruta_sents[ei + 1]
+                    combined_en = en_sent + '. ' + next_en
+                    
+                    # 拼接后的EN也做段落匹配
+                    constrained = pairs[first_pi:last_pi+1]
+                    pi_inner_next = best_para_for_sent(next_en, constrained)
+                    pi_merged = first_pi + pi_inner_next
+                    
+                    if pi_merged == pi:
+                        zh_list_m = zh_by_para.get(pi, [])
+                        if zh_list_m:
+                            if pi_merged not in para_vec_cache:
+                                para_vec_cache[pi_merged] = sentence_transformers_model_labse.embed(
+                                    zh_list_m, batch_size=32, normalize_embeddings=True,
+                                    show_progress_bar=False, lang='zh'
+                                )
+                            en_vec_m = sentence_transformers_model_labse.embed(
+                                [combined_en], batch_size=1, normalize_embeddings=True,
+                                show_progress_bar=False, lang='en'
+                            )[0]
+                            sims_m = np.dot(para_vec_cache[pi_merged], en_vec_m)
+                            best_idx_m = np.argsort(sims_m)[::-1][0]
+                            best_score_m = sims_m[best_idx_m]
+                            
+                            if best_score_m >= 0.4 and best_score_m >= best_score + 0.1:
+                                # 合并后匹配成功，两句话共享同一句ZH
+                                print(f'  [merge] EN[{ei}]+EN[{ei+1}] -> 段落[{pi}]ZH[{best_idx_m}] score={best_score_m:.4f} (单个{best_score:.4f})')
+                                aligned.append([en_sent, zh_list_m[best_idx_m], 'ima_merge'])
+                                aligned.append([next_en, zh_list_m[best_idx_m], 'ima_merge'])
+                                merged = True
+                            elif best_score_m >= 0.35 and best_score_m >= best_score + 0.15:
+                                # 阈值放宽到0.35
+                                print(f'  [merge] EN[{ei}]+EN[{ei+1}] -> 段落[{pi}]ZH[{best_idx_m}] score={best_score_m:.4f} (单个{best_score:.4f}) [宽松]')
+                                aligned.append([en_sent, zh_list_m[best_idx_m], 'ima_merge'])
+                                aligned.append([next_en, zh_list_m[best_idx_m], 'ima_merge'])
+                                merged = True
+                
+                if not merged:
+                    aligned.append([en_sent, aliyun_zh, 'aliyun'])
+                    print(f'  [align] EN[{ei}] <-> 段落[{pi}]ZH[{best_idx}] score={best_score:.4f} < 0.4, 阿里云兜底 (合并失败)')
 
     except ImportError as e:
 
@@ -11624,17 +11666,26 @@ if not pairs:
 
     # 标题翻译：先从 pairs 找官方翻译，找不到再阿里云
     if title_cn == title_en or not any("\u4e00" <= c <= "\u9fff" for c in title_cn):
+        # 构建关键词对照表
+        word_map = build_key_word_map_from_pairs(pairs)
+        
         # 先从 pairs 找标题关键词对应的官方翻译
         candidate = extract_title_cn_from_pairs(pairs, title_en)
         if candidate:
             title_cn = candidate
             print(f'[translate_article] 标题翻译: 从 pairs 找到官方翻译 "{candidate}"')
         else:
-            # 阿里云兜底
-            t = aliyun_translate_title(title_en)
-            if t:
-                title_cn = t
-                print(f'[translate_article] 标题翻译: 阿里云兜底 "{t}"')
+            # 用关键词对照表 + 阿里云综合翻译
+            candidate = translate_title_with_word_map(title_en, pairs, word_map)
+            if candidate:
+                title_cn = candidate
+                print(f'[translate_article] 标题翻译: 关键词综合翻译 "{candidate}" (词表: {len(word_map)}个)')
+            else:
+                # 阿里云兜底
+                t = aliyun_translate_title(title_en)
+                if t:
+                    title_cn = t
+                    print(f'[translate_article] 标题翻译: 阿里云兜底 "{t}"')
 
 
 
@@ -11772,7 +11823,7 @@ for group in groups:
             html_line += '<p style="margin:0 0 14px 0;">' + zh_text + '</p>'
             lines.append(html_line)
     
-    elif rel_type.startswith(':1') and zh_text:  # M:1
+    elif rel_type.endswith(':1') and int(rel_type.split(':')[0]) > 1 and zh_text:  # M:1
         # 多个 EN 各一行，灰色小字
         for en_item in en_list:
             lines.append('<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en_item + '</p>')
@@ -12168,3 +12219,80 @@ print(f"[translate_article] HTML done, {len(pairs)} pairs")
 
 
 
+
+
+def build_key_word_map_from_pairs(pairs_list):
+    """从 pairs 中提取 EN关键词 -> ZH官方翻译 的对照表"""
+    word_map = {}
+    stopwords = {"that","this","with","have","your","from","they","them","will","what","when",
+                 "into","been","were","also","just","more","than","then","there","their",
+                 "which","still","only","such","very","even","does","dont","cant","wont","should"}
+    
+    for en, zh in pairs_list:
+        en_str = str(en).strip() if en else ""
+        zh_str = str(zh).strip() if zh else ""
+        if not en_str or not zh_str:
+            continue
+        
+        en_kws = [w.strip(".,!"'-():").lower() for w in en_str.split() 
+                  if len(w.strip(".,!"'-():")) > 2 and w.strip(".,!"'-():").lower() not in stopwords]
+        if not en_kws:
+            continue
+        
+        zh_parts = re.split(r"[，。；]", zh_str)
+        for kw in en_kws:
+            for zp in zh_parts:
+                zp = zp.strip()
+                if 3 <= len(zp) <= 10:
+                    word_map[kw] = zp
+    
+    return word_map
+
+
+def translate_title_with_word_map(en_title, pairs_list, word_map):
+    """用关键词对照表 + 阿里云翻译 综合生成标题翻译"""
+    if not word_map:
+        return None
+    
+    en_words = en_title.split()
+    en_lower = [w.strip(".,!"'-():").lower() for w in en_words]
+    known_kws = [w for w in en_lower if w in word_map]
+    if not known_kws:
+        return None
+    
+    candidates = []
+    for en, zh in pairs_list:
+        en_str = str(en).strip() if en else ""
+        zh_str = str(zh).strip() if zh else ""
+        if not en_str or not zh_str:
+            continue
+        
+        en_kws_found = [w.strip(".,!"'-():").lower() for w in en_str.split() 
+                        if w.strip(".,!"'-():").lower() in known_kws]
+        if en_kws_found:
+            candidates.append((en, zh, en_kws_found))
+    
+    if not candidates:
+        return None
+    
+    zh_sents = [zh for en, zh, _ in candidates]
+    aliyun_full = aliyun_translate_title(en_title)
+    
+    if not aliyun_full and zh_sents:
+        return polish_title(zh_sents[0])
+    
+    if not aliyun_full:
+        return None
+    
+    best_zh = ""
+    best_score = 0
+    for zh in zh_sents:
+        zh_kws = sum(1 for kw in known_kws if word_map.get(kw, "") in zh)
+        if zh_kws > best_score:
+            best_score = zh_kws
+            best_zh = zh
+    
+    if best_zh:
+        return polish_title(best_zh)
+    
+    return aliyun_full
