@@ -17618,6 +17618,12 @@ def do_alignment_and_audit():
 
 
 
+
+pairs = []
+
+
+
+
 # 切割过长的中文句子：如果ZH包含逗号，拆分给前后EN
 
 for i in range(len(pairs)):
