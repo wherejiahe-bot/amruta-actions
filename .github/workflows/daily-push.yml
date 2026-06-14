@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 20 * * *'
   workflow_dispatch:
+    inputs:
+      date_override:
+        description: 'Override date (YYYY-MM-DD). Leave empty for today.'
+        required: false
+        default: ''
 
 jobs:
   daily-push:
@@ -15,6 +20,8 @@ jobs:
         with: {node-version: '20'}
 
       - name: Step1 - Fetch article
+        env:
+          DATE_OVERRIDE: ${{ github.event.inputs.date_override }}
         run: python3 scripts/step1_fetch.py
 
       - name: Cache AI models
