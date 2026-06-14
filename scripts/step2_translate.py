@@ -11943,6 +11943,126 @@ link = sahaja_link or link
 
 
 
+
+# ========== 语义去重（sentence-transformers） ==========
+# 规则：
+#   1. 用 LaBSE 做句子嵌入，余弦相似度 > THRESHOLD 视为重复
+#   2. 如果两个重复句子长度相同 → 去哪个都行（保留第一个）
+#   3. 如果长度不同 → 保留较长的，去除较短的
+# 不去动前面的对齐、翻译逻辑
+
+import numpy as np
+from sentence_transformers import SentenceTransformer as STModel
+
+DEDUP_THRESHOLD = 0.85  # 余弦相似度阈值，>0.85 视为重复
+DEDUP_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"  # 轻量级，384维
+
+# 加载模型（缓存已存在，首次下载后不再下载）
+print(f"[dedup] Loading model: {DEDUP_MODEL_NAME}...")
+try:
+    _dedup_model = STModel(DEDUP_MODEL_NAME, device="cpu")  # 用CPU避免GPU依赖
+    print(f"[dedup] Model loaded.")
+except Exception as e:
+    print(f"[dedup] Model load failed ({e}), skipping semantic dedup.")
+    _dedup_model = None
+
+
+def cosine_sim(vec1, vec2):
+    a = np.array(vec1)
+    b = np.array(vec2)
+    dot = np.dot(a, b)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(dot / (norm_a * norm_b))
+
+
+def semantic_dedup(pairs_list, lang="zh"):
+    """对指定语言列做语义去重，保留较长句子"""
+    if _dedup_model is None:
+        print("[dedup] Model not loaded, skipping.")
+        return pairs_list, 0
+
+    target_sents = []
+    for i, (en, zh) in enumerate(pairs_list):
+        text = zh if lang == "zh" else en
+        target_sents.append((text.strip(), i))
+
+    non_empty = [(t, idx) for t, idx in target_sents if t]
+    if len(non_empty) < 2:
+        return pairs_list, 0
+
+    print(f"[dedup] {lang.upper()}: computing embeddings for {len(non_empty)} sentences...")
+    texts = [t for t, _ in non_empty]
+    embeddings = _dedup_model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
+
+    removed_indices = set()
+    dedup_count = 0
+
+    for i in range(len(non_empty)):
+        if i in removed_indices:
+            continue
+        for j in range(i + 1, len(non_empty)):
+            if j in removed_indices:
+                continue
+
+            orig_i_idx = non_empty[i][1]
+            orig_j_idx = non_empty[j][1]
+
+            if lang == "zh":
+                text_a = str(pairs_list[orig_i_idx][1]).strip()
+                text_b = str(pairs_list[orig_j_idx][1]).strip()
+            else:
+                text_a = str(pairs_list[orig_i_idx][0]).strip()
+                text_b = str(pairs_list[orig_j_idx][0]).strip()
+
+            # 先检查纯字符串重复（快）
+            if text_a == text_b:
+                len_a, len_b = len(text_a), len(text_b)
+                if len_a <= len_b:
+                    removed_indices.add(orig_i_idx)
+                    dedup_count += 1
+                    print(f"  [dedup REMOVED] {lang}: len={len_a}")
+                else:
+                    removed_indices.add(orig_j_idx)
+                    dedup_count += 1
+                    print(f"  [dedup REMOVED] {lang}: len={len_b}")
+                continue
+
+            # 语义重复
+            sim = cosine_sim(embeddings[i], embeddings[j])
+            if sim > DEDUP_THRESHOLD:
+                len_a, len_b = len(text_a), len(text_b)
+                if len_a <= len_b:
+                    removed_indices.add(orig_i_idx)
+                    dedup_count += 1
+                    print(f"  [dedup REMOVED] {lang}: len={len_a} sim={sim:.3f}")
+                else:
+                    removed_indices.add(orig_j_idx)
+                    dedup_count += 1
+                    print(f"  [dedup REMOVED] {lang}: len={len_b} sim={sim:.3f}")
+
+    if removed_indices:
+        deduped = [pairs_list[i] for i in range(len(pairs_list)) if i not in removed_indices]
+        print(f"[dedup] Removed {dedup_count} duplicate {lang} sentence(s). Remaining: {len(deduped)}")
+        return deduped, dedup_count
+    else:
+        print(f"[dedup] No {lang} duplicates found.")
+        return pairs_list, 0
+
+
+# ===== 执行中文去重（主要目标） =====
+print(f"
+[dedup] === Starting semantic dedup ===")
+pairs, zh_removed = semantic_dedup(pairs, lang="zh")
+
+# ===== 再执行英文去重 =====
+pairs, en_removed = semantic_dedup(pairs, lang="en")
+
+print(f"
+[dedup] Summary: ZH removed: {zh_removed}, EN removed: {en_removed}")
+print(f"[dedup] Final pairs count: {len(pairs)}")
 html = "<!DOCTYPE html><html><head><meta charset=utf-8><meta name=viewport content=width=device-width,initial-scale=1></head><body style=font-family:Helvetica Neue,Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px 16px;color:#222;line-height:1.7;>"
 
 
