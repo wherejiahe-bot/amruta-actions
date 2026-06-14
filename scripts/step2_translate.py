@@ -12030,6 +12030,13 @@ def semantic_dedup(pairs_list, lang="zh"):
                     print(f"  [dedup REMOVED] {lang}: len={len_b}")
                 continue
 
+            # 短句保护：< 15 个词不参与语义去重
+            words_a = len(text_a.split()) if lang == 'en' else 999
+            words_b = len(text_b.split()) if lang == 'en' else 999
+            if words_a < 15 or words_b < 15:
+                print(f'  [dedup SKIP short] {lang}: a={words_a}w b={words_b}w (too short for semantic dedup)')
+                continue
+
             # 语义重复
             sim = cosine_sim(embeddings[i], embeddings[j])
             if sim > DEDUP_THRESHOLD:
@@ -12037,11 +12044,11 @@ def semantic_dedup(pairs_list, lang="zh"):
                 if len_a <= len_b:
                     removed_indices.add(orig_i_idx)
                     dedup_count += 1
-                    print(f"  [dedup REMOVED] {lang}: len={len_a} sim={sim:.3f}")
+                    print(f'  [dedup REMOVED] {lang}: "{text_a[:60]}" (len={len_a}, sim={sim:.3f}) <- kept "{text_b[:60]}" (len={len_b})')
                 else:
                     removed_indices.add(orig_j_idx)
                     dedup_count += 1
-                    print(f"  [dedup REMOVED] {lang}: len={len_b} sim={sim:.3f}")
+                    print(f'  [dedup REMOVED] {lang}: "{text_b[:60]}" (len={len_b}, sim={sim:.3f}) <- kept "{text_a[:60]}" (len={len_a})')
 
     if removed_indices:
         deduped = [pairs_list[i] for i in range(len(pairs_list)) if i not in removed_indices]
@@ -12232,23 +12239,7 @@ html += "</body></html>"
 
 
 
-with open("/tmp/pairs.json", "w", encoding="utf-8") as f:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    json.dump(pairs, f, ensure_ascii=False, indent=2)
+# pairs.json already restored from archive before dedup — no overwrite needed
 
 
 
