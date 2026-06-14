@@ -2,9 +2,14 @@
 Step 1: Fetch today's article from amruta.today API.
 Output: /tmp/article_raw.json
 """
-import urllib.request, json, re, datetime
+import urllib.request, json, re, datetime, os
 
-cn = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+override_str = os.environ.get("DATE_OVERRIDE", "")
+if override_str:
+    parts = override_str.split("-")
+    cn = datetime.datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+else:
+    cn = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
 month = str(cn.month).zfill(2)
 day = str(cn.day).zfill(2)
 date_str = cn.strftime("%Y-%m-%d")
