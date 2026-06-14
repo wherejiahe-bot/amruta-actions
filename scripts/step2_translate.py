@@ -12052,6 +12052,17 @@ def semantic_dedup(pairs_list, lang="zh"):
         return pairs_list, 0
 
 
+# ===== 去重前先保存原始 pairs 到 pairs_archive.json =====
+print("\n[dedup] Saving original pairs to pairs_archive.json BEFORE dedup...")
+with open("/tmp/pairs_archive.json", "w", encoding="utf-8") as f:
+    json.dump(pairs, f, ensure_ascii=False, indent=2)
+
+# ===== 推送前：用原始完整 pairs 覆盖 dedupped pairs =====
+import shutil
+shutil.copy2("/tmp/pairs_archive.json", "/tmp/pairs.json")
+print("[dedup] RESTORED: copied original pairs to pairs.json")
+print("[dedup] Original pairs saved")
+
 # ===== 执行中文去重（主要目标） =====
 print(f"\n[dedup] === Starting semantic dedup ===")
 pairs, zh_removed = semantic_dedup(pairs, lang="zh")
