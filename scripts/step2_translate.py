@@ -903,10 +903,10 @@ def aliyun_translate_title(text):
         if result.get("Code") == "200":
             translated = result.get("Data", {}).get("Translated", "")
         if translated and translated != str(text).strip():
-            print("[aliyun_title] OK: "" + str(text).strip()[:50] + "" -> "" + translated[:50] + """)
+            print("[aliyun_title] OK: " + str(text).strip()[:50] + " -> " + translated[:50])
             return translated
         else:
-            print("[aliyun_title] NO-RESULT: code=" + result.get("Code","?") + " translated_len=" + str(len(translated)))
+            print("[aliyun_title] NO-RESULT: code=" + result.get("Code","?") + " len=" + str(len(translated)))
     except Exception as e:
         print("[aliyun_title] ERROR: " + str(e)[:150])
     return None
