@@ -11422,7 +11422,16 @@ def split_sentences(text):
 
 
 
-    return [s.strip() for s in sents if len(s.strip()) > 10]
+    result = [s.strip() for s in sents if len(s.strip()) >= 1]
+    # Verify: all original words are preserved
+    orig_words = text.strip().split()
+    result_words = " ".join(result).split()
+    if len(orig_words) != len(result_words):
+        import difflib
+        diff = list(difflib.ndiff(orig_words, result_words))
+        diffs = [d for d in diff if d[0] != " "][:5]
+        print(f"[split_sentences] WARNING: word count mismatch: orig={len(orig_words)}, split={len(result_words)}. First diffs: {diffs}")
+    return result
 
 
 
@@ -23417,7 +23426,7 @@ if not pairs:
 
 
 
-final_link = sahaja_link or link
+final_link = sahaja_link or "https://amruta.today/"
 
 
 
@@ -23867,7 +23876,7 @@ except: dd = date_str
 
 
 
-link = sahaja_link or link
+link = sahaja_link or "https://amruta.today/"
 
 
 
