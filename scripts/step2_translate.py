@@ -903,12 +903,9 @@ def aliyun_translate_title(text):
         if result.get("Code") == "200":
             translated = result.get("Data", {}).get("Translated", "")
         if translated and translated != str(text).strip():
-            print("[aliyun_title] OK: " + str(text).strip()[:50] + " -> " + translated[:50])
             return translated
-        else:
-            print("[aliyun_title] NO-RESULT: code=" + result.get("Code","?") + " len=" + str(len(translated)))
     except Exception as e:
-        print("[aliyun_title] ERROR: " + str(e)[:150])
+        print("[aliyun_title] Error: " + str(e)[:100])
     return None
 
 
@@ -3332,14 +3329,10 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
         if score > 0.3 and score > best_score:
             best_score, best_zh = score, zh_str
     if best_zh:
-        print("[extract_title] KEYWORD-MATCH: "" + best_zh[:60] + """)
         return best_zh
-    print("[extract_title] no keyword match, trying Aliyun...")
     t = aliyun_translate_title(en_title)
     if t:
-        print("[extract_title] ALIYUN-FALLBACK: "" + t[:60] + """)
         return t
-    print("[extract_title] ALL FAILED")
     return None
 
 
@@ -23142,6 +23135,17 @@ else:
 
 
         print(f"[translate_article] Aliyun done: {len(pairs)} sentences")
+
+    # === FORCE TITLE TRANSLATION ===
+    if title_cn == title_en:
+        print(f"[translate_article] FORCE-TITLE: title is still English, trying Aliyun...")
+        t = aliyun_translate_title(title_en)
+        if t and t != title_en:
+            title_cn = t
+            print(f"[translate_article] FORCE-TITLE: done -> \"{title_cn}\"")
+        else:
+            print(f"[translate_article] FORCE-TITLE: failed, keeping English")
+
 
 
 
