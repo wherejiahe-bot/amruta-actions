@@ -12053,15 +12053,13 @@ def semantic_dedup(pairs_list, lang="zh"):
 
 
 # ===== 执行中文去重（主要目标） =====
-print(f"
-[dedup] === Starting semantic dedup ===")
+print(f"\n[dedup] === Starting semantic dedup ===")
 pairs, zh_removed = semantic_dedup(pairs, lang="zh")
 
 # ===== 再执行英文去重 =====
 pairs, en_removed = semantic_dedup(pairs, lang="en")
 
-print(f"
-[dedup] Summary: ZH removed: {zh_removed}, EN removed: {en_removed}")
+print(f"\n[dedup] Summary: ZH removed: {zh_removed}, EN removed: {en_removed}")
 print(f"[dedup] Final pairs count: {len(pairs)}")
 html = "<!DOCTYPE html><html><head><meta charset=utf-8><meta name=viewport content=width=device-width,initial-scale=1></head><body style=font-family:Helvetica Neue,Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px 16px;color:#222;line-height:1.7;>"
 
