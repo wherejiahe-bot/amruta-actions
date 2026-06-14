@@ -12109,10 +12109,10 @@ pairs, en_removed = semantic_dedup(pairs, lang="en")
 
 print(f"\n[dedup] Summary: ZH removed: {zh_removed}, EN removed: {en_removed}")
 print(f"[dedup] Final pairs count: {len(pairs)}")
-    # ===== 写入去重后的 pairs 到 pairs.json（供 step3 使用） =====
-    with open("/tmp/pairs.json", "w", encoding="utf-8") as f:
-        json.dump(pairs, f, ensure_ascii=False, indent=2)
-    print("[dedup] WRITTEN: deduped pairs saved to pairs.json")
+# ===== 写入去重后的 pairs 到 pairs.json（供 step3 使用） =====
+with open("/tmp/pairs.json", "w", encoding="utf-8") as f:
+    json.dump(pairs, f, ensure_ascii=False, indent=2)
+print("[dedup] WRITTEN: deduped pairs saved to pairs.json")
 
 # ===== 重建 pair_html（基于去重后的 pairs） =====
 pair_html = rebuild_pair_html(pairs)
