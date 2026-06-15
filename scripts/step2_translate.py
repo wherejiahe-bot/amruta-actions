@@ -10725,29 +10725,31 @@ if not pairs:
 
 
 
-    print(f"[translate_article] processing title for: {title_en[:60]}")# ============ 标题翻译 + D Link ============ #
+#============ 标题翻译 + D Link ============ #
 
-    # 标题翻译：阿里云优先（最可靠），失败再降级到 pairs/词表
-    if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
-        # 第1优先：阿里云直接翻译
-        t = aliyun_translate_title(title_en)
-        if t:
-            title_cn = polish_title(t)
-            print(f"[translate_article] 标题翻译: 阿里云翻译 -> {title_cn}")
+print(f"[translate_article] processing title for: {title_en[:60]}")
+
+# 标题翻译：阿里云优先（最可靠），失败再降级到 pairs/词表
+if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
+    # 第1优先：阿里云直接翻译
+    t = aliyun_translate_title(title_en)
+    if t:
+        title_cn = polish_title(t)
+        print(f"[translate_article] 标题翻译: 阿里云翻译 -> {title_cn}")
+    else:
+        # 第2优先：从 pairs 找官方翻译
+        candidate = extract_title_cn_from_pairs(pairs, title_en)
+        if candidate:
+            title_cn = candidate
+            print(f"[translate_article] 标题翻译: 从 pairs 找到官方翻译 {candidate}")
         else:
-            # 第2优先：从 pairs 找官方翻译
-            candidate = extract_title_cn_from_pairs(pairs, title_en)
+            # 第3优先：关键词对照表综合翻译
+            word_map = build_key_word_map_from_pairs(pairs)
+            candidate = translate_title_with_word_map(title_en, pairs, word_map)
             if candidate:
                 title_cn = candidate
-                print(f"[translate_article] 标题翻译: 从 pairs 找到官方翻译 {candidate}")
-            else:
-                # 第3优先：关键词对照表综合翻译
-                word_map = build_key_word_map_from_pairs(pairs)
-                candidate = translate_title_with_word_map(title_en, pairs, word_map)
-                if candidate:
-                    title_cn = candidate
-                    print(f"[translate_article] 标题翻译: 关键词综合翻译 {candidate}")
-                # 如果全部失败，title_cn 保持英文 fallback
+                print(f"[translate_article] 标题翻译: 关键词综合翻译 {candidate}")
+            # 如果全部失败，title_cn 保持英文 fallback
 
 
 
