@@ -10440,7 +10440,7 @@ if not pairs:
             month_day = date_str[5:] if len(date_str) >= 10 and date_str[4] == '-' else date_str
             search_text_md = f'{month_day} {content[:200]}'
             print(f'[translate_article] Phase2 also empty, Phase3 using month-day+body: month_day={month_day}, text_len={len(search_text_md)}')
-            search_ima_kb_with_retry(search_text_md, 'Phase3(md+body)')earch_ima_kb_with_retry(search_text_md, "Phase3(md+body)")
+            search_ima_kb_with_retry(search_text_md, "Phase3(md+body)")
 
 
 
