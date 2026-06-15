@@ -10403,7 +10403,14 @@ if not pairs:
 
 
 
-        phase2_ok = search_ima_kb_with_retry(content[:200], "Phase2(body)")
+        # Phase 2: extract first 2 English sentences/paragraphs from content for better search
+        paras = [p.strip() for p in content.split(chr(10)) if p.strip()][:2]
+        if paras:
+            search_text = ' '.join(paras)[:500]
+        else:
+            search_text = content[:200]
+        print(f"[translate_article] Phase2 using {len(search_text)} chars for search...")
+        phase2_ok = search_ima_kb_with_retry(search_text, "Phase2(body)")
 
 
 
