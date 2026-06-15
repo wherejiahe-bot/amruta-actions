@@ -10405,30 +10405,42 @@ if not pairs:
 
 
 
-    if not phase1_ok:
-
-
-
-        print(f"[translate_article] Phase1 date search empty, retrying with body content...")
-
-
-
+        if not phase1_ok:
+        print(f'[translate_article] Phase1 date search empty, trying correct date from source URL...')
+        
+        # Try extracting correct date from source URL (e.g., "1979/06/15" from amruta.org or sahaja.live)
+        import re as _re2
+        correct_date = None
+        if link:
+            _m = _re2.search(r'/?(\d{4})[-/](\d{2})[-/]?(-?\d{2})', link)
+            if _m:
+                _day = _m.group(3).lstrip('-') if _m.group(3).startswith('-') else _m.group(3)
+                correct_date = f'{_m.group(1)}-{_m.group(2)}-{_day}'
+        
+        if correct_date and correct_date != date_str:
+            print(f'[translate_article] Found correct date from source URL: {correct_date} (amruta.today said {date_str})')
+            phase1_retry_ok = search_ima_kb_with_retry(correct_date, "Phase1(correct_date_from_URL)")
+            if phase1_retry_ok:
+                print(f'[translate_article] Phase1 succeeded with correct date from URL!')
+        else:
+            print(f'[translate_article] No correct date found in source URL, moving to Phase 2')
+        
         # Phase 2: extract first 2 English sentences/paragraphs from content for better search
         paras = [p.strip() for p in content.split(chr(10)) if p.strip()][:2]
         if paras:
             search_text = ' '.join(paras)[:500]
         else:
             search_text = content[:200]
-        print(f"[translate_article] Phase2 using {len(search_text)} chars for search...")
-        phase2_ok = search_ima_kb_with_retry(search_text, "Phase2(body)")
-
+        print(f'[translate_article] Phase2 using {len(search_text)} chars for search...')
+        phase2_ok = search_ima_kb_with_retry(search_text, 'Phase2(body)')
+        
         # Phase 3: month+day (no year) + first 200 chars - handles wrong years in amruta.today
         if not phase2_ok:
             # Extract month-day from date_str (e.g., "06-15" from "1972-06-15")
-            month_day = date_str[5:] if len(date_str) >= 10 and date_str[4] == "-" else date_str
-            search_text_md = f"{month_day} {content[:200]}"
-            print(f"[translate_article] Phase2 also empty, Phase3 using month-day+body: month_day={month_day}, text_len={len(search_text_md)}")
-            search_ima_kb_with_retry(search_text_md, "Phase3(md+body)")
+            month_day = date_str[5:] if len(date_str) >= 10 and date_str[4] == '-' else date_str
+            search_text_md = f'{month_day} {content[:200]}'
+            print(f'[translate_article] Phase2 also empty, Phase3 using month-day+body: month_day={month_day}, text_len={len(search_text_md)}')
+            search_ima_kb_with_retry(search_text_md, 'Phase3(md+body)')earch_ima_kb_with_retry(search_text_md, "Phase3(md+body)")
 
 
 
