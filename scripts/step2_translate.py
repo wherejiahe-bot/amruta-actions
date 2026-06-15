@@ -480,7 +480,8 @@ def aliyun_translate_title(text):
     return ""
 
 def polish_title(zh):
-
+    """润色中文标题，当前为直通（可加后处理规则）"""
+    return zh
 
 
 
@@ -10724,30 +10725,33 @@ if not pairs:
 
 
 
-    print(f"[translate_article] No Chinese, EN only: {len(pairs)} paras")# ============ 标题翻译 + D Link ============ #
+    print(f"[translate_article] processing title for: {title_en[:60]}")# ============ 标题翻译 + D Link ============ #
 
-    # 标题翻译：先从 pairs 找官方翻译，找不到再阿里云
-    if title_cn == title_en or not any("\u4e00" <= c <= "\u9fff" for c in title_cn):
-        # 构建关键词对照表
-        word_map = build_key_word_map_from_pairs(pairs)
-        
-        # 先从 pairs 找标题关键词对应的官方翻译
-        candidate = extract_title_cn_from_pairs(pairs, title_en)
-        if candidate:
-            title_cn = candidate
-            print(f'[translate_article] 标题翻译: 从 pairs 找到官方翻译 "{candidate}"')
+    # 标题翻译：阿里云优先（最可靠），失败再降级到 pairs/词表
+    if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
+        # 第1优先：阿里云直接翻译
+        t = aliyun_translate_title(title_en)
+        if t:
+            title_cn = polish_title(t)
+            print(f"[translate_article] 标题翻译: 阿里云翻译 -> {title_cn}")
         else:
-            # 用关键词对照表 + 阿里云综合翻译
-            candidate = translate_title_with_word_map(title_en, pairs, word_map)
+            # 第2优先：从 pairs 找官方翻译
+            candidate = extract_title_cn_from_pairs(pairs, title_en)
             if candidate:
                 title_cn = candidate
-                print(f'[translate_article] 标题翻译: 关键词综合翻译 "{candidate}" (词表: {len(word_map)}个)')
+                print(f"[translate_article] 标题翻译: 从 pairs 找到官方翻译 {candidate}")
             else:
-                # 阿里云兜底
-                t = aliyun_translate_title(title_en)
-                if t:
-                    title_cn = t
-                    print(f'[translate_article] 标题翻译: 阿里云兜底 "{t}"')
+                # 第3优先：关键词对照表综合翻译
+                word_map = build_key_word_map_from_pairs(pairs)
+                candidate = translate_title_with_word_map(title_en, pairs, word_map)
+                if candidate:
+                    title_cn = candidate
+                    print(f"[translate_article] 标题翻译: 关键词综合翻译 {candidate}")
+                # 如果全部失败，title_cn 保持英文 fallback
+
+
+
+
 
 
 
