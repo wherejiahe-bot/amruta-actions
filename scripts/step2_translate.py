@@ -10383,7 +10383,17 @@ if not pairs:
 
 
 
-    phase1_ok = search_ima_kb_with_retry(date_str, "Phase1(date)")
+    # Phase 1: search by date from source URL (correct year), fallback to article date
+    search_date = date_str
+    if link:
+        import re as _re
+        _m = _re.search(r'/(\d{4})[-/](\d{2})[-/]?(\d{2})', link)
+        if _m:
+            search_date = f"{_m.group(1)}-{_m.group(2)}-{_m.group(3)}"
+            if search_date != date_str:
+                print(f"[translate_article] Phase1 using date from source URL: {search_date} (article date was {date_str})")
+    
+    phase1_ok = search_ima_kb_with_retry(search_date, "Phase1(date)")
 
 
 
