@@ -145,3 +145,28 @@ _最后更新：2026-06-15 00:00_\n\n---\n\n# 今日 amruta 每日推送 对话�
 - 在 SKILL.md 中加入循环检查 6 月 15 日至 12 日的验证逻辑。
 - 新增伪代码描述：在每次 workflow 成功后向前检查前一天，直到 6 月 12 日全部通过后自动暂停 automation（status->PAUSED）。
 - 为后续实现提供实现思路和 pause_automation
+
+
+---
+
+## amruta-fix-loop 修复 (2026-06-15 20:43 UTC)
+
+### 发现
+- 6-14, 6-15, 6-16 三篇文章中文标题缺失
+- 6-12, 6-13 正常（通过 pairs 匹配获得中文标题）
+
+### 根因（两个 Bug）
+1. polish_title 空函数返回 None — translate_title_with_word_map 永远返回 None
+2. 标题翻译优先级不合理 — 阿里云应作为主要手段
+
+### 修复
+1. step2_translate.py commit 37a7437:
+   - polish_title 改为 return zh
+   - 标题翻译: 阿里云优先 -> pairs -> 词表
+2. 手动修复3篇 missing titles:
+   - 6-14 关照真我 / 6-15 犹在思虑的梦境中 / 6-16 领受应许之美
+   - 同步 articles.json + daily HTML + index.html
+
+### 已知问题
+- 阿里云标题翻译在 GH Actions 不稳定（超时）
+- DeepSeek API Key 已失效
