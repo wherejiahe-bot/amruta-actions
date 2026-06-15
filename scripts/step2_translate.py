@@ -10406,7 +10406,7 @@ if not pairs:
 
 
     if not phase1_ok:
-    print(f'[translate_article] Phase1 date search empty, trying correct date from source URL...')
+        print(f'[translate_article] Phase1 date search empty, trying correct date from source URL...')
     
     # Try extracting correct date from source URL (e.g., "1979/06/15" from amruta.org or sahaja.live)
     import re as _re2
