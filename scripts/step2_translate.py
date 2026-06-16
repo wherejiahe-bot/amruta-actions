@@ -10052,7 +10052,39 @@ for i in range(len(pairs)):
 
 
 
-def search_ima_kb(query_text, phase_name):
+def extract_date_from_url(url):
+    """从URL中提取月份-日子 (MM-DD)。
+    支持 sahaja.live、amruta.org 等常见日期格式。
+    返回 (month_day_str, full_date_str) 或 (None, None)。
+    
+    示例：
+      https://sahaja.live/...1979-06-15... -> ("06-15", "1979-06-15")
+      https://www.amruta.org/1979/06/15/... -> ("06-15", "1979-06-15")
+    """
+    if not url:
+        return None, None
+    import re as _re_date
+    
+    # Pattern 1: YYYY-MM-DD or YYYY/MM/DD
+    m = _re_date.search(r'(\d{4})[-/](\d{2})[-/](\d{2})', url)
+    if m:
+        full = f'{m.group(1)}-{m.group(2)}-{m.group(3)}'
+        md = f'{m.group(2)}-{m.group(3)}'
+        return md, full
+    
+    # Pattern 2: YYYYMMDD (compact)
+    m = _re_date.search(r'(\d{4})(\d{2})(\d{2})', url)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1900 <= y <= 2100 and 1 <= mo <= 12 and 1 <= d <= 31:
+            full = f'{m.group(1)}-{m.group(2)}-{m.group(3)}'
+            md = f'{m.group(2)}-{m.group(3)}'
+            return md, full
+    
+    return None, None
+
+
+def search_ima_kb(query_text, phase_name, date_str=None):
 
 
 
@@ -10128,142 +10160,136 @@ def search_ima_kb(query_text, phase_name):
 
 
 
-        zh_doc = None
-
-
-
+        # 按中文标题优先排序，但会遍历所有 doc 直到找到日期匹配的
+        zh_docs = []
+        en_docs = []
         for doc in docs:
-
-
-
             title = doc.get("title", "")
-
-
-
             cn = sum(1 for c in title if "一" <= c <= "鿿")
-
-
-
             print(f'[translate_article]   {title[:50]} | cn={cn}')
-
-
-
-            if cn >= 3 and not zh_doc:
-
-
-
-                zh_doc = doc
-
-
-
-        target = zh_doc or docs[0]
-
-
-
-        fid = target.get("media_id", "")
-
-
-
-        if not fid:
-
-
-
-            return False
-
-
-
-        media_req = urllib.request.Request(f"https://ima.qq.com/openapi/wiki/v1/get_media_info?media_id={fid}", headers=ima_headers)
-
-
-
-        media_data = json.loads(urllib.request.urlopen(media_req, timeout=15).read()).get("data", {})
-
-
-
-        dl_url = media_data.get("url_info", {}).get("url", "")
-
-
-
-        dl_hdrs = media_data.get("url_info", {}).get("headers", {})
-
-
-
-        if not dl_url:
-
-
-
-            return False
-
-
-
-        md_req = urllib.request.Request(dl_url, headers=dl_hdrs)
-
-
-
-        zh_text = urllib.request.urlopen(md_req, timeout=30).read().decode("utf-8").replace(chr(13)+chr(10), chr(10))
-
-
-
-        if zh_text.strip():
-
-
-
-            # Parse as bilingual EN+ZH inline document
-
-
-
-            src_url, parsed_pairs = parse_ima_bilingual_md(zh_text)
-
-
-
-            if src_url:
-
-
-
-                sahaja_link = src_url
-
-
-
-                print(f'[translate_article] IMA source link: {sahaja_link[:80]}')
-
-
-
-            if parsed_pairs:
-
-
-
-                pairs = parsed_pairs
-
-
-
-                print(f'[translate_article] IMA KB OK: {len(pairs)} pairs, {sum(1 for _,z in pairs if z.strip())} have zh, {len(zh_text)} chars')
-
-
-
-                return True
-
-
-
-            # Fallback: Chinese-only mode
-
-
-
-            zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
-
-
-
-            pairs = [["", s] for s in zh_sentences]
-
-
-
-            print(f'[translate_article] IMA KB OK (zh-only fallback): {len(pairs)} zh-sentences')
-
-
-
+            if cn >= 3:
+                zh_docs.append(doc)
+            else:
+                en_docs.append(doc)
+        
+        # 优先遍历中文 doc，然后英文 doc
+        ordered_docs = zh_docs + en_docs
+        
+        # 用于 fallback：第一个成功的文档
+        fallback_text = None
+        fallback_src_url = None
+        fallback_parsed_pairs = None
+        best_matched = False
+        
+        for doc_idx, doc in enumerate(ordered_docs):
+            fid = doc.get("media_id", "")
+            if not fid:
+                continue
+            
+            try:
+                media_req = urllib.request.Request(
+                    f"https://ima.qq.com/openapi/wiki/v1/get_media_info?media_id={fid}",
+                    headers=ima_headers
+                )
+                media_data = json.loads(urllib.request.urlopen(media_req, timeout=15).read()).get("data", {})
+                dl_url = media_data.get("url_info", {}).get("url", "")
+                dl_hdrs = media_data.get("url_info", {}).get("headers", {})
+                
+                if not dl_url:
+                    continue
+                
+                md_req = urllib.request.Request(dl_url, headers=dl_hdrs)
+                zh_text = urllib.request.urlopen(md_req, timeout=30).read().decode("utf-8").replace(chr(13)+chr(10), chr(10))
+                
+                if not zh_text.strip():
+                    continue
+                
+                # Parse source URL for date validation
+                src_url, parsed_pairs = parse_ima_bilingual_md(zh_text)
+                
+                # === DATE VALIDATION: check if IMA source URL date matches article date ===
+                if src_url and date_str:
+                    src_md, src_full = extract_date_from_url(src_url)
+                    article_md = date_str[5:] if len(date_str) >= 10 and date_str[4] == '-' else date_str
+                    
+                    if src_md and src_md == article_md:
+                        # PERFECT MATCH: this is the correct document
+                        print(f'[translate_article]   doc#{doc_idx} DATE MATCH: source={src_full}, article={date_str} ✓✓✓')
+                        sahaja_link = src_url
+                        print(f'[translate_article] IMA source link (verified): {sahaja_link[:80]}')
+                        
+                        if parsed_pairs:
+                            pairs = parsed_pairs
+                            print(f'[translate_article] IMA KB OK: {len(pairs)} pairs, {sum(1 for _,z in pairs if z.strip())} have zh')
+                            best_matched = True
+                            return True
+                        
+                        # Chinese-only fallback
+                        zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
+                        pairs = [["", s] for s in zh_sentences]
+                        print(f'[translate_article] IMA KB OK (zh-only fallback, verified date): {len(pairs)} zh-sentences')
+                        best_matched = True
+                        return True
+                    
+                    elif src_md:
+                        print(f'[translate_article]   doc#{doc_idx} DATE MISMATCH: source={src_full} vs article={date_str} ✗ (checking next...)')
+                        # Save as fallback but keep looking
+                        if fallback_text is None and parsed_pairs:
+                            fallback_text = zh_text
+                            fallback_src_url = src_url
+                            fallback_parsed_pairs = parsed_pairs
+                    else:
+                        print(f'[translate_article]   doc#{doc_idx} NO DATE in source URL, using as fallback')
+                        if fallback_text is None and parsed_pairs:
+                            fallback_text = zh_text
+                            fallback_src_url = src_url
+                            fallback_parsed_pairs = parsed_pairs
+                else:
+                    # No date to validate, just use first valid doc
+                    if parsed_pairs:
+                        if src_url:
+                            sahaja_link = src_url
+                            print(f'[translate_article] IMA source link: {sahaja_link[:80]}')
+                        pairs = parsed_pairs
+                        print(f'[translate_article] IMA KB OK: {len(pairs)} pairs')
+                        return True
+                    
+                    zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
+                    pairs = [["", s] for s in zh_sentences]
+                    print(f'[translate_article] IMA KB OK (zh-only): {len(pairs)} zh-sentences')
+                    return True
+                    
+            except Exception as e:
+                print(f'[translate_article]   doc#{doc_idx} download/parse failed: {e}')
+                continue
+        
+        # === FALLBACK: no doc had matching date, use first valid one with WARNING ===
+        if fallback_text and fallback_parsed_pairs:
+            sahaja_link = fallback_src_url
+            if sahaja_link:
+                src_md, src_full = extract_date_from_url(sahaja_link)
+                article_md = date_str[5:] if date_str and len(date_str) >= 10 else "?"
+                print(f'[translate_article] ⚠ DATE MISMATCH (using fallback): IMA link date={src_md or "?"} vs article={article_md}')
+                print(f'[translate_article] IMA source link (fallback, UNVERIFIED): {sahaja_link[:80]}')
+            
+            pairs = fallback_parsed_pairs
+            print(f'[translate_article] IMA KB OK (fallback, date NOT verified): {len(pairs)} pairs')
             return True
-
-
-
+        
+        # Chinese-only fallback for first valid doc
+        if fallback_text:
+            sahaja_link = fallback_src_url
+            if sahaja_link:
+                src_md, src_full = extract_date_from_url(sahaja_link)
+                article_md = date_str[5:] if date_str and len(date_str) >= 10 else "?"
+                print(f'[translate_article] ⚠ DATE MISMATCH (zh-only fallback): IMA link date={src_md or "?"} vs article={article_md}')
+            
+            zh_sentences = [s.strip() for s in re.split(r'[。！？]', fallback_text) if len(s.strip()) >= 2]
+            pairs = [["", s] for s in zh_sentences]
+            print(f'[translate_article] IMA KB OK (zh-only fallback, date NOT verified): {len(pairs)} zh-sentences')
+            return True
+        
+        print(f'[translate_article] IMA KB {phase_name}: all {len(ordered_docs)} docs failed to produce valid content')
         return False
 
 
@@ -10296,7 +10322,7 @@ MAX_RETRIES = 3
 
 
 
-def search_ima_kb_with_retry(query_text, phase_name):
+def search_ima_kb_with_retry(query_text, phase_name, date_str=None):
 
 
 
@@ -10312,7 +10338,7 @@ def search_ima_kb_with_retry(query_text, phase_name):
 
 
 
-            result = search_ima_kb(query_text, phase_name)
+            result = search_ima_kb(query_text, phase_name, date_str=date_str)
 
 
 
@@ -10394,7 +10420,7 @@ if not pairs:
             if search_date != date_str:
                 print(f"[translate_article] Phase1 using date from source URL: {search_date} (article date was {date_str})")
     
-    phase1_ok = search_ima_kb_with_retry(search_date, "Phase1(date)")
+    phase1_ok = search_ima_kb_with_retry(search_date, "Phase1(date)", date_str=date_str)
 
 
 
@@ -10420,7 +10446,7 @@ if not pairs:
     
     if correct_date and correct_date != date_str:
         print(f'[translate_article] Found correct date from source URL: {correct_date} (amruta.today said {date_str})')
-        phase1_retry_ok = search_ima_kb_with_retry(correct_date, "Phase1(correct_date_from_URL)")
+        phase1_retry_ok = search_ima_kb_with_retry(correct_date, "Phase1(correct_date_from_URL)", date_str=date_str)
         if phase1_retry_ok:
             print(f'[translate_article] Phase1 succeeded with correct date from URL!')
     else:
@@ -10433,7 +10459,7 @@ if not pairs:
     else:
         search_text = content[:200]
     print(f'[translate_article] Phase2 using {len(search_text)} chars for search...')
-    phase2_ok = search_ima_kb_with_retry(search_text, 'Phase2(body)')
+    phase2_ok = search_ima_kb_with_retry(search_text, 'Phase2(body)', date_str=date_str)
     
     # Phase 3: month+day (no year) + first 200 chars - handles wrong years in amruta.today
     if not phase2_ok:
@@ -10441,7 +10467,7 @@ if not pairs:
         month_day = date_str[5:] if len(date_str) >= 10 and date_str[4] == '-' else date_str
         search_text_md = f'{month_day} {content[:200]}'
         print(f'[translate_article] Phase2 also empty, Phase3 using month-day+body: month_day={month_day}, text_len={len(search_text_md)}')
-        search_ima_kb_with_retry(search_text_md, "Phase3(md+body)")
+        search_ima_kb_with_retry(search_text_md, "Phase3(md+body)", date_str=date_str)
 
 
 
@@ -10769,6 +10795,28 @@ if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
 
 
 
+# ============ 底部链接日期校验 (Post-validation) ============ #
+# 确保邮件底部的 sahaja_link 日期与文章日期匹配
+# 如果月份和日子不对，说明 IMA 知识库文档找错了
+if sahaja_link and date_str:
+    src_md, src_full = extract_date_from_url(sahaja_link)
+    article_md = date_str[5:] if len(date_str) >= 10 and date_str[4] == '-' else date_str
+    if src_md:
+        if src_md != article_md:
+            print(f'')
+            print(f'╔══════════════════════════════════════════════════════════════╗')
+            print(f'║  ⚠  IMA文档日期不匹配！                                     ║')
+            print(f'║  文章日期: {date_str}                                       ║')
+            print(f'║  IMA链接日期: {src_full}                                    ║')
+            print(f'║  底部链接: {sahaja_link[:80]}                              ║')
+            print(f'║  结论: IMA知识库可能返回了错误日期的文档                      ║')
+            print(f'║  状态: 使用 fallback，但翻译质量可能受影响                   ║')
+            print(f'╚══════════════════════════════════════════════════════════════╝')
+            print(f'')
+        else:
+            print(f'[translate_article] ✓ 底部链接日期校验通过: IMA链接={src_full}, 文章={date_str}')
+    else:
+        print(f'[translate_article] ? 底部链接无法提取日期，跳过校验: {sahaja_link[:80]}')
 
 final_link = sahaja_link or link
 
