@@ -9814,6 +9814,87 @@ if not pairs:
 
 
 
+def build_key_word_map_from_pairs(pairs_list):
+    """从段落级 pairs 中提取 EN关键词 -> ZH官方翻译 的对照表"""
+    word_map = {}
+    stopwords = {"that","this","with","have","your","from","they","them","will","what","when",
+                 "into","been","were","also","just","more","than","then","there","their",
+                 "which","still","only","such","very","even","does","dont","cant","wont","should"}
+
+    for item in pairs_list:
+        if not isinstance(item, dict):
+            continue
+        zh_para = (item.get("zh_para") or "").strip()
+        for s in item.get("sentences", []):
+            en_str = (s.get("en") or "").strip()
+            if not en_str or not zh_para:
+                continue
+            en_kws = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split()
+                      if len(w.strip(".!,:;!?()-_[]")) > 2 and w.strip(".!,:;!?()-_[]").lower() not in stopwords]
+            if not en_kws:
+                continue
+            zh_parts = re.split(r"[，。；]", zh_para)
+            for kw in en_kws:
+                for zp in zh_parts:
+                    zp = zp.strip()
+                    if 3 <= len(zp) <= 10:
+                        word_map[kw] = zp
+    return word_map
+
+
+def translate_title_with_word_map(en_title, pairs_list, word_map):
+    """用关键词对照表 + 阿里云翻译 综合生成标题翻译"""
+    if not word_map:
+        return None
+    
+    en_words = en_title.split()
+    en_lower = [w.strip(".!,:;!?()-_[]").lower() for w in en_words]
+    known_kws = [w for w in en_lower if w in word_map]
+    if not known_kws:
+        return None
+    
+    candidates = []
+    for item in pairs_list:
+        if not isinstance(item, dict):
+            continue
+        zh_para = (item.get("zh_para") or "").strip()
+        if not zh_para:
+            continue
+        for s in item.get("sentences", []):
+            en_str = (s.get("en") or "").strip()
+            if not en_str:
+                continue
+            en_kws_found = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split()
+                            if w.strip(".!,:;!?()-_[]").lower() in known_kws]
+            if en_kws_found:
+                candidates.append((en_str, zh_para, en_kws_found))
+    
+    if not candidates:
+        return None
+    
+    zh_sents = list(dict.fromkeys(zh for _, zh, _ in candidates))
+    aliyun_full = aliyun_translate_title(en_title)
+    
+    if not aliyun_full and zh_sents:
+        return polish_title(zh_sents[0])
+    
+    if not aliyun_full:
+        return None
+    
+    best_zh = ""
+    best_score = 0
+    for zh in zh_sents:
+        zh_kws = sum(1 for kw in known_kws if word_map.get(kw, "") in zh)
+        if zh_kws > best_score:
+            best_score = zh_kws
+            best_zh = zh
+    
+    if best_zh:
+        return polish_title(best_zh)
+    
+    return aliyun_full
+
+
 #============ 标题翻译 + D Link ============ #
 
 print(f"[translate_article] processing title for: {title_en[:60]}")
@@ -10487,82 +10568,3 @@ print(f"[translate_article] HTML done, {len(pairs)} pairs")
 
 
 
-def build_key_word_map_from_pairs(pairs_list):
-    """从段落级 pairs 中提取 EN关键词 -> ZH官方翻译 的对照表"""
-    word_map = {}
-    stopwords = {"that","this","with","have","your","from","they","them","will","what","when",
-                 "into","been","were","also","just","more","than","then","there","their",
-                 "which","still","only","such","very","even","does","dont","cant","wont","should"}
-
-    for item in pairs_list:
-        if not isinstance(item, dict):
-            continue
-        zh_para = (item.get("zh_para") or "").strip()
-        for s in item.get("sentences", []):
-            en_str = (s.get("en") or "").strip()
-            if not en_str or not zh_para:
-                continue
-            en_kws = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split()
-                      if len(w.strip(".!,:;!?()-_[]")) > 2 and w.strip(".!,:;!?()-_[]").lower() not in stopwords]
-            if not en_kws:
-                continue
-            zh_parts = re.split(r"[，。；]", zh_para)
-            for kw in en_kws:
-                for zp in zh_parts:
-                    zp = zp.strip()
-                    if 3 <= len(zp) <= 10:
-                        word_map[kw] = zp
-    return word_map
-
-
-def translate_title_with_word_map(en_title, pairs_list, word_map):
-    """用关键词对照表 + 阿里云翻译 综合生成标题翻译"""
-    if not word_map:
-        return None
-    
-    en_words = en_title.split()
-    en_lower = [w.strip(".!,:;!?()-_[]").lower() for w in en_words]
-    known_kws = [w for w in en_lower if w in word_map]
-    if not known_kws:
-        return None
-    
-    candidates = []
-    for item in pairs_list:
-        if not isinstance(item, dict):
-            continue
-        zh_para = (item.get("zh_para") or "").strip()
-        if not zh_para:
-            continue
-        for s in item.get("sentences", []):
-            en_str = (s.get("en") or "").strip()
-            if not en_str:
-                continue
-            en_kws_found = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split()
-                            if w.strip(".!,:;!?()-_[]").lower() in known_kws]
-            if en_kws_found:
-                candidates.append((en_str, zh_para, en_kws_found))
-    
-    if not candidates:
-        return None
-    
-    zh_sents = list(dict.fromkeys(zh for _, zh, _ in candidates))
-    aliyun_full = aliyun_translate_title(en_title)
-    
-    if not aliyun_full and zh_sents:
-        return polish_title(zh_sents[0])
-    
-    if not aliyun_full:
-        return None
-    
-    best_zh = ""
-    best_score = 0
-    for zh in zh_sents:
-        zh_kws = sum(1 for kw in known_kws if word_map.get(kw, "") in zh)
-        if zh_kws > best_score:
-            best_score = zh_kws
-            best_zh = zh
-    
-    if best_zh:
-        return polish_title(best_zh)
-    
-    return aliyun_full
