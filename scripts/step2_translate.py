@@ -9588,469 +9588,114 @@ def dp_align(sim_matrix, skip_cost=0.6):
 
 
 
-def do_alignment_and_audit():
-
-
-
-    """句级对齐：Bertalign集成（LaBSE多语言模型，原生支持1:N/N:1）"""
-
-
-
-    global pairs, title_cn
-
-
-
-
-
-
-
-    amruta_sents = split_sentences(content)
-
-
-
-    if not amruta_sents: return
-
-
-
-
-
-
-
-    stopwords = {"that","this","with","have","your","from","they","them","will","what","when",
-
-
-
-                 "into","been","were","also","just","more","than","then","there","their",
-
-
-
-                 "which","still","only","such","very","even","does","dont","cant","wont","should"}
-
-
-
-
-
-
-
-    def best_para_for_sent(en_s, lst):
-
-
-
-        kws = set(re.findall(r"[a-z]{4,}", en_s.lower())) - stopwords
-
-
-
-        best_sc, best_pi = 0, 0
-
-
-
-        for pi, (ep, zp) in enumerate(lst):
-
-
-
-            if not zp.strip(): continue
-
-
-
-            epw = set(re.findall(r"[a-z]{4,}", ep.lower())) - stopwords
-
-
-
-            if not epw: continue
-
-
-
-            sc = len(kws & epw) / max(len(kws), 1) if kws else 0
-
-
-
-            if sc > best_sc: best_sc, best_pi = sc, pi
-
-
-
-        return best_pi
-
-
-
-
-
-
-
-    # Phase 1: 段落锚定
-
-
-
-    all_en_empty = all(not en.strip() for en, _ in pairs)
-
-
-
-    if all_en_empty:
-
-
-
-        first_pi, last_pi = 0, len(pairs)-1
-
-
-
-    else:
-
-
-
-        first_pi = max(best_para_for_sent(amruta_sents[0], pairs), 2)
-
-
-
-        last_pi = best_para_for_sent(amruta_sents[-1], pairs)
-
-
-
-        if last_pi < first_pi: last_pi = first_pi
-
-
-
-        for pi in range(last_pi+1, min(last_pi+15, len(pairs))):
-
-
-
-            if pairs[pi][1].strip(): last_pi = pi
-
-
-
-
-
-
-
-    print(f"[translate] 锚定[{first_pi}~{last_pi}]")
-
-
-
-
-
-
-
-    # Phase 2: 收集锚定段落中的ZH句子
-
-
-
-    zh_sentences = []
-
-
-
-    for pi in range(first_pi, min(last_pi+1, len(pairs))):
-
-
-
-        zp = pairs[pi][1].strip()
-
-
-
-        if len(zp) >= 2:
-
-
-
-            sents = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) >= 2]
-
-
-
-            if sents:
-
-
-
-                zh_sentences.extend([(s, pi) for s in sents])
-
-
-
-
-
-
-
-    print(f"[translate] ZH锚定段落句子池: {len(zh_sentences)}句")
-
-
-
-    if not zh_sentences:
-
-
-
-        pairs = [[s, ""] for s in amruta_sents]
-
-
-
-        return
-
-
-
-
-
-
-
-    # Phase 3: lingtrain-aligner 对齐 (直接用 LaBSE 余弦相似度)
-
-
-
-    aligned = []
-
-
-
+def llm_sentence_align(en_sents, zh_paragraphs, model="mistralai/mistral-small-4-119b-2603"):
+    """调用LLM（Mistral Small 4 via NVIDIA NIM）做句级对齐。"""
+    if not en_sents:
+        return []
+    en_text = "\n".join(f"[{i}] {s}" for i, s in enumerate(en_sents))
+    zh_text = "\n".join(f"[{i}] {s}" for i, s in enumerate(zh_paragraphs) if s.strip())
+    prompt = f"""You are a bilingual sentence alignment assistant. Given a list of English sentences (from an Amruta talk) and a list of Chinese paragraphs (the official translation from Sahaja.live), please align them.
+
+**Rules:**
+1. For each English sentence, find the best matching Chinese text (it could be 1:1, 1:N (one English -> multiple Chinese), or N:1 (multiple English -> one Chinese)).
+2. Preserve the official Chinese text EXACTLY - do not rephrase or summarize.
+3. If a Chinese paragraph covers multiple English sentences, assign the SAME Chinese text to each English sentence (mark them as merged).
+4. If an English sentence has no matching Chinese, use "" for the Chinese field.
+5. If an English sentence could match only a portion of a Chinese paragraph, split the paragraph at commas or sentence boundaries and assign the relevant portion.
+
+**Input:**
+
+=== ENGLISH SENTENCES ===
+{en_text}
+
+=== CHINESE PARAGRAPHS ===
+{zh_text}
+
+**Output format:** Return ONLY a valid JSON array, nothing else. Each element: [en_index, zh_index_or_null, "exact"|"partial"|"no_match"]
+  - en_index: index of the English sentence (0-based)
+  - zh_index_or_null: index of the Chinese paragraph that contains the translation, or null if no match
+  - "exact": 1:1 or 1:N alignment
+  - "partial": N:1 alignment (multiple English map to same Chinese)
+  - "no_match": no Chinese found
+
+Example: [[0, 2, "exact"], [1, null, "no_match"], [2, 2, "exact"], [3, 2, "partial"]]
+"""
+    api_key = os.environ.get("NVIDIA_API_KEY", "") or os.environ.get("NVAPI_KEY", "") or "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"
+    if not api_key:
+        print("[llm_align] NVIDIA_API_KEY 未设置，回退空结果")
+        return [[s, "", "aliyun"] for s in en_sents]
+    data = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a precise bilingual alignment assistant. Output only JSON."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.0,
+        "max_tokens": 5120,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://integrate.api.nvidia.com/v1/chat/completions",
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+    )
     try:
-
-
-
-        from lingtrain_aligner.model_dispatcher import sentence_transformers_model_labse
-
-
-
-
-
-
-
-        # 为每句EN找精确段落，构建src/tgt
-
-
-
-        zh_by_para = {}
-
-
-
-        for pi in range(first_pi, min(last_pi+1, len(pairs))):
-
-
-
-            zp = pairs[pi][1].strip()
-
-
-
-            if len(zp) >= 2:
-
-
-
-                sents = [s.strip() for s in re.split(r'[。！？]', zp) if len(s.strip()) >= 2]
-
-
-
-                if sents: zh_by_para[pi] = sents
-
-
-
-
-
-
-
-        # 逐句段落受限匹配：每个EN只在自己对应段落里找最佳ZH
-        # 不构造全局tgt_lines，改为对每个EN独立匹配
-
-
-        # ============ 逐句段落受限匹配 ============
-        # 每个EN句只在自己的对应段落里找最佳ZH句（最相似的前K条）
-        K = 3  # 每个EN最多考虑前K条最相似的ZH
-
-        para_vec_cache = {}  # pi -> vec (缓存段落向量)
-
-        for ei, en_sent in enumerate(amruta_sents):
-            constrained = pairs[first_pi:last_pi+1]
-            pi_inner = best_para_for_sent(en_sent, constrained)
-            pi = first_pi + pi_inner
-
-            zh_list = zh_by_para.get(pi, [])
-            if not zh_list:
-                # 该段落无ZH -> 阿里云兜底
-                aliyun_zh = aliyun_translate_title(en_sent) or ''
-                aligned.append([en_sent, aliyun_zh, 'aliyun'])
-                print(f'  [align] EN[{ei}] -> 段落[{pi}]无ZH, 阿里云兜底')
-                continue
-
-            # 段落ZH向量化（缓存避免重复）
-            if pi not in para_vec_cache:
-                para_vec_cache[pi] = sentence_transformers_model_labse.embed(
-                    zh_list, batch_size=32, normalize_embeddings=True,
-                    show_progress_bar=False, lang='zh'
-                )
-            para_vec = para_vec_cache[pi]
-
-            # EN句embedding
-            en_vec = sentence_transformers_model_labse.embed(
-                [en_sent], batch_size=1, normalize_embeddings=True,
-                show_progress_bar=False, lang='en'
-            )[0]
-
-            # 余弦相似度
-            sims = np.dot(para_vec, en_vec)
-            top_indices = np.argsort(sims)[::-1][:K]
-
-            # 取最高分且>=0.4的ZH
-            best_idx = top_indices[0]
-            best_score = sims[best_idx]
-
-            if best_score >= 0.4:
-                aligned.append([en_sent, zh_list[best_idx], 'IMA'])
-                print(f'  [align] EN[{ei}] <-> 段落[{pi}]ZH[{best_idx}] score={best_score:.4f} "{zh_list[best_idx][:50]}"')
+        resp = urllib.request.urlopen(req, timeout=120)
+        result = json.loads(resp.read().decode("utf-8"))
+        content = result["choices"][0]["message"]["content"].strip()
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        align_result = json.loads(content)
+        aligned = []
+        for en_idx, zh_idx, match_type in align_result:
+            en_s = en_sents[en_idx]
+            if zh_idx is not None and 0 <= zh_idx < len(zh_paragraphs):
+                zh_s = zh_paragraphs[zh_idx].strip()
             else:
-                # 最佳ZH相似度不够，尝试与相邻句合并后重新匹配
-                aliyun_zh = aliyun_translate_title(en_sent) or ''
-                
-                # Step 1: M:1 合并低分句
-                merged = False
-                if ei + 1 < len(amruta_sents):
-                    next_en = amruta_sents[ei + 1]
-                    combined_en = en_sent + '. ' + next_en
-                    
-                    # 拼接后的EN也做段落匹配
-                    constrained = pairs[first_pi:last_pi+1]
-                    pi_inner_next = best_para_for_sent(next_en, constrained)
-                    pi_merged = first_pi + pi_inner_next
-                    
-                    if pi_merged == pi:
-                        zh_list_m = zh_by_para.get(pi, [])
-                        if zh_list_m:
-                            if pi_merged not in para_vec_cache:
-                                para_vec_cache[pi_merged] = sentence_transformers_model_labse.embed(
-                                    zh_list_m, batch_size=32, normalize_embeddings=True,
-                                    show_progress_bar=False, lang='zh'
-                                )
-                            en_vec_m = sentence_transformers_model_labse.embed(
-                                [combined_en], batch_size=1, normalize_embeddings=True,
-                                show_progress_bar=False, lang='en'
-                            )[0]
-                            sims_m = np.dot(para_vec_cache[pi_merged], en_vec_m)
-                            best_idx_m = np.argsort(sims_m)[::-1][0]
-                            best_score_m = sims_m[best_idx_m]
-                            
-                            if best_score_m >= 0.4 and best_score_m >= best_score + 0.1:
-                                # 合并后匹配成功，两句话共享同一句ZH
-                                print(f'  [merge] EN[{ei}]+EN[{ei+1}] -> 段落[{pi}]ZH[{best_idx_m}] score={best_score_m:.4f} (单个{best_score:.4f})')
-                                aligned.append([en_sent, zh_list_m[best_idx_m], 'ima_merge'])
-                                aligned.append([next_en, zh_list_m[best_idx_m], 'ima_merge'])
-                                merged = True
-                            elif best_score_m >= 0.35 and best_score_m >= best_score + 0.15:
-                                # 阈值放宽到0.35
-                                print(f'  [merge] EN[{ei}]+EN[{ei+1}] -> 段落[{pi}]ZH[{best_idx_m}] score={best_score_m:.4f} (单个{best_score:.4f}) [宽松]')
-                                aligned.append([en_sent, zh_list_m[best_idx_m], 'ima_merge'])
-                                aligned.append([next_en, zh_list_m[best_idx_m], 'ima_merge'])
-                                merged = True
-                
-                if not merged:
-                    aligned.append([en_sent, aliyun_zh, 'aliyun'])
-                    print(f'  [align] EN[{ei}] <-> 段落[{pi}]ZH[{best_idx}] score={best_score:.4f} < 0.4, 阿里云兜底 (合并失败)')
-
-    except ImportError as e:
-
-
-
-        print(f'[translate] lingtrain-aligner缺依赖: {e}')
-
-
-
-        for sent in amruta_sents:
-
-
-
-            zh = aliyun_translate_title(sent) or ''
-
-
-
-            aligned.append([sent, zh, 'aliyun'])
-
-
-
-
-
-
-
+                zh_s = ""
+            aligned.append([en_s, zh_s, "llm"])
+        return aligned
     except Exception as e:
+        print(f"[llm_align] API调用失败: {e}")
+        return [[s, "", "aliyun"] for s in en_sents]
 
 
-
-        print(f'[translate] lingtrain-aligner失败 ({e})，回退阿里云翻译')
-
-
-
-        for sent in amruta_sents:
-
-
-
-            zh = aliyun_translate_title(sent) or ''
-
-
-
-            aligned.append([sent, zh, 'aliyun'])
-
-
-
-
-
-
-
-    print(f"[translate] === 对齐报告 ===")
-
-
-
-    for i, (en, zh, src) in enumerate(aligned):
-
-
-
-        print(f"  [{i:2d}] {src:>6} | {en[:50]}... | {zh[:50]}...")
-
-
-
-
-
-
-
+def do_alignment_and_audit():
+    """句级对齐：调用LLM（Mistral Small 4）代替复杂算法"""
+    global pairs, title_cn
+    amruta_sents = split_sentences(content)
+    if not amruta_sents:
+        return
+    zh_paragraphs = [zh for _, zh in pairs]
+    aligned = llm_sentence_align(amruta_sents, zh_paragraphs)
     pairs = [[en, zh] for en, zh, _ in aligned]
-
-
-
+    cn = sum(1 for _, z in pairs if z.strip())
+    llm_cn = sum(1 for _, z, s in aligned if z.strip() and s == "llm")
+    print(f"[translate] LLM对齐完成: {len(pairs)}句, {cn}句有中文 (LLM: {llm_cn})")
 
 # 切割过长的中文句子：如果ZH包含逗号，拆分给前后EN
 for i in range(len(pairs)):
     zh = pairs[i][1] if pairs[i][1] else ''
     if '，' in zh and i + 1 < len(pairs):
-        parts = zh.split('，', 1)  # 最多分成两段
+        parts = zh.split('，', 1)
         next_zh = pairs[i+1][1] if pairs[i+1][1] else ''
-        # 把第二段接给下一句EN
         combined_next = parts[1] + '，' + next_zh
         pairs[i][1] = parts[0]
         pairs[i+1][1] = combined_next
 
-    for idx in range(len(pairs)):
+for idx in range(len(pairs)):
+    zh = pairs[idx][1]
+    zh = zh.replace("左翼还是右翼", "偏左或偏右")
+    zh = zh.replace("左翼或右翼", "偏左或偏右")
+    pairs[idx][1] = zh
 
-
-
-        zh = pairs[idx][1]
-
-
-
-        zh = zh.replace("左翼还是右翼", "偏左或偏右")
-
-
-
-        zh = zh.replace("左翼或右翼", "偏左或偏右")
-
-
-
-        pairs[idx][1] = zh
-
-
-
-
-
-
-
-    cn = sum(1 for _,z in pairs if z.strip())
-
-
-
-    ima_cn = sum(1 for _,_,s in aligned if s == "IMA")
-
-
-
-    print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文 (IMA: {ima_cn}, Aliyun: {len(aligned)-ima_cn})")
-
-
-
-
-
-
+cn = sum(1 for _, z in pairs if z.strip())
+print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文 (LLM)")
 
 def extract_date_from_url(url):
     """从URL中提取月份-日子 (MM-DD)。
