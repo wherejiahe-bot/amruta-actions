@@ -800,614 +800,32 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 
-    for en, zh in pairs_list:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        if not zh.strip():
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    for item in pairs_list:
+        if not isinstance(item, dict):
             continue
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        en_lower = en.lower()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        if all(kw in en_lower for kw in keywords):
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            en_sents = re.split(r'[.,]', en)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            zh_sents = re.split(r'[，。]', zh)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            for i, es in enumerate(en_sents):
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                es_lower = es.lower()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                if all(kw in es_lower for kw in keywords):
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                    ratio = i / max(len(en_sents) - 1, 1)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                    zh_idx = round(ratio * (len(zh_sents) - 1))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                    zh_part = zh_sents[zh_idx].strip() if zh_idx < len(zh_sents) else ""
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                    if len(zh_part) > 4:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                        return polish_title(zh_part)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            for part in re.split(r'[，。；]', zh):
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                part = part.strip()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                if 4 < len(part) <= 20:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                    return polish_title(part)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        zh_para = (item.get("zh_para") or "").strip()
+        if not zh_para:
+            continue
+        for s in item.get("sentences", []):
+            en_str = (s.get("en") or "").strip()
+            if not en_str:
+                continue
+            en_lower = en_str.lower()
+            if all(kw in en_lower for kw in keywords):
+                en_sents = re.split(r'[.,]', en_str)
+                zh_sents = re.split(r'[，。]', zh_para)
+                for i, es in enumerate(en_sents):
+                    es_lower = es.lower()
+                    if all(kw in es_lower for kw in keywords):
+                        ratio = i / max(len(en_sents) - 1, 1)
+                        zh_idx = round(ratio * (len(zh_sents) - 1))
+                        zh_part = zh_sents[zh_idx].strip() if zh_idx < len(zh_sents) else ""
+                        if len(zh_part) > 4:
+                            return polish_title(zh_part)
+                for part in re.split(r'[，。；]', zh_para):
+                    part = part.strip()
+                    if 4 < len(part) <= 20:
+                        return polish_title(part)
     return None
 
 
@@ -4480,6 +3898,8 @@ def has_chinese(pairs_list):
 
 
 
+    if pairs_list and isinstance(pairs_list[0], dict):
+        return any((item.get("zh_para") or "").strip() for item in pairs_list)
     return any(zh.strip() for _, zh in pairs_list)
 
 
@@ -9666,36 +9086,34 @@ Example: [[0, 2, "exact"], [1, null, "no_match"], [2, 2, "exact"], [3, 2, "parti
 
 
 def do_alignment_and_audit():
-    """句级对齐：调用LLM（Mistral Small 4）代替复杂算法"""
+    """句级对齐：对每段分别切句、分别调用LLM对齐，输出段落级结构"""
     global pairs, title_cn
-    amruta_sents = split_sentences(content)
-    if not amruta_sents:
-        return
-    zh_paragraphs = [zh for _, zh in pairs]
-    aligned = llm_sentence_align(amruta_sents, zh_paragraphs)
-    pairs = [[en, zh] for en, zh, _ in aligned]
-    cn = sum(1 for _, z in pairs if z.strip())
-    llm_cn = sum(1 for _, z, s in aligned if z.strip() and s == "llm")
-    print(f"[translate] LLM对齐完成: {len(pairs)}句, {cn}句有中文 (LLM: {llm_cn})")
-
-# 切割过长的中文句子：如果ZH包含逗号，拆分给前后EN
-for i in range(len(pairs)):
-    zh = pairs[i][1] if pairs[i][1] else ''
-    if '，' in zh and i + 1 < len(pairs):
-        parts = zh.split('，', 1)
-        next_zh = pairs[i+1][1] if pairs[i+1][1] else ''
-        combined_next = parts[1] + '，' + next_zh
-        pairs[i][1] = parts[0]
-        pairs[i+1][1] = combined_next
-
-for idx in range(len(pairs)):
-    zh = pairs[idx][1]
-    zh = zh.replace("左翼还是右翼", "偏左或偏右")
-    zh = zh.replace("左翼或右翼", "偏左或偏右")
-    pairs[idx][1] = zh
-
-cn = sum(1 for _, z in pairs if z.strip())
-print(f"[translate] 完成: {len(pairs)}句, {cn}句有中文 (LLM)")
+    structured = []
+    for en_para, zh_para in pairs:
+        en_sents = split_sentences(en_para)
+        if not en_sents:
+            continue
+        aligned = llm_sentence_align(en_sents, [zh_para])
+        sentences = [{"en": en, "zh": zh} for en, zh, _ in aligned]
+        # 逗号切割后处理：段落内相邻句之间切割
+        for i in range(len(sentences)):
+            zh = sentences[i].get("zh", "") or ""
+            if '，' in zh and i + 1 < len(sentences):
+                parts = zh.split('，', 1)
+                next_zh = sentences[i+1].get("zh", "") or ""
+                combined_next = parts[1] + '，' + next_zh
+                sentences[i]["zh"] = parts[0]
+                sentences[i+1]["zh"] = combined_next
+        # 左右翼替换
+        for s in sentences:
+            z = s.get("zh", "") or ""
+            z = z.replace("左翼还是右翼", "偏左或偏右")
+            z = z.replace("左翼或右翼", "偏左或偏右")
+            s["zh"] = z
+        structured.append({"en_para": en_para, "zh_para": zh_para, "sentences": sentences})
+    pairs = structured
+    cn = sum(1 for item in pairs for s in item["sentences"] if (s.get("zh") or "").strip())
+    print(f"[translate] 段落级对齐完成: {len(pairs)}段, {cn}句有中文")
 
 def extract_date_from_url(url):
     """从URL中提取月份-日子 (MM-DD)。
@@ -10529,105 +9947,26 @@ from collections import defaultdict
 
 # ============ 构建配对 HTML（1:1 / 1:M / M:1 关系渲染） ============ #
 def rebuild_pair_html(pairs_list):
-    """从 pairs 列表重建 HTML 正文，支持 1:1 / M:1 / 1:M 关系"""
+    """从段落级结构重建 HTML 正文（段落内 M:1，N句英文 → 1段中文）"""
     if not pairs_list:
         return ""
-    
-    # 第一步：按 ZH 分组，统计每句中文被多少句英文引用
-    zh_en_map = defaultdict(list)  # zh_text -> [en_texts]
-    en_zh_map = defaultdict(list)  # en_text -> [zh_texts]
-    zh_order = []  # 保持 ZH 首次出现的顺序
-    
-    for en, zh in pairs_list:
-        en_str = str(en).strip() if en else ''
-        zh_str = str(zh).strip() if zh else ''
-        if zh_str and en_str:
-            zh_en_map[zh_str].append(en_str)
-            en_zh_map[en_str].append(zh_str)
-            if zh_str not in zh_order:
-                zh_order.append(zh_str)
-    
-    # 第二步：构建关系分组列表
-    # 每个 group = { 'type': '1:1' | 'M:1' | '1:M', 'en': [...], 'zh': [...] }
-    groups = []
-    processed_zh = set()
-    processed_en = set()
-    
-    for en, zh in pairs_list:
-        en_str = str(en).strip() if en else ''
-        zh_str = str(zh).strip() if zh else ''
-        if not en_str and not zh_str:
-            continue
-        
-        if zh_str:
-            if zh_str not in processed_zh:
-                all_en = zh_en_map[zh_str]
-                count = len(all_en)
-                if count > 1:
-                    # 多个 EN → 一个 ZH  => M:1
-                    groups.append({
-                        'type': 'M:1',
-                        'en': all_en,
-                        'zh': [zh_str]
-                    })
-                else:
-                    # 检查这个 EN 是否对应多个 ZH → 1:M
-                    the_en = all_en[0]
-                    if the_en in en_zh_map and len(en_zh_map[the_en]) > 1:
-                        # 同一个 EN 对应多个 ZH => 1:M
-                        if the_en not in processed_en:
-                            all_zh = en_zh_map[the_en]
-                            groups.append({
-                                'type': '1:M',
-                                'en': [the_en],
-                                'zh': all_zh
-                            })
-                            processed_en.add(the_en)
-                        processed_zh.add(zh_str)
-                    else:
-                        # 1:1
-                        groups.append({
-                            'type': '1:1',
-                            'en': all_en,
-                            'zh': [zh_str]
-                        })
-                processed_zh.add(zh_str)
-        else:
-            # 纯 EN 无 ZH
-            if en_str not in processed_en:
-                groups.append({
-                    'type': '1:0',
-                    'en': [en_str],
-                    'zh': []
-                })
-                processed_en.add(en_str)
-    
-    # 第三步：HTML 渲染
     lines_out = []
-    for group in groups:
-        rel_type = group['type']
-        en_list = group['en']
-        zh_list = group['zh']
-        
-        if rel_type == '1:0':  # EN 无 ZH
-            lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">' + en_list[0] + '</p>')
-        
-        elif rel_type == '1:1':  # 1对1
-            if en_list and zh_list:
-                html_line = '<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en_list[0] + '</p>'
-                html_line += '<p style="margin:0 0 14px 0;">' + zh_list[0] + '</p>'
-                lines_out.append(html_line)
-        
-        elif rel_type == 'M:1':  # 多EN → 单ZH
+    for item in pairs_list:
+        if not isinstance(item, dict):
+            continue
+        sentences = item.get("sentences", [])
+        if not sentences:
+            continue
+        zh_para = (item.get("zh_para") or "").strip()
+        en_list = [s.get("en", "") for s in sentences]
+        has_zh = any((s.get("zh") or "").strip() for s in sentences)
+        if not has_zh:
+            for en_item in en_list:
+                lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">' + en_item + '</p>')
+        else:
             for en_item in en_list:
                 lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en_item + '</p>')
-            lines_out.append('<p style="margin:0 0 14px 0;">' + zh_list[0] + '</p>')
-        
-        elif rel_type == '1:M':  # 单EN → 多ZH
-            lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en_list[0] + '</p>')
-            for zh_item in zh_list:
-                lines_out.append('<p style="margin:0 0 14px 0;">' + zh_item + '</p>')
-    
+            lines_out.append('<p style="margin:0 0 14px 0;">' + zh_para + '</p>')
     return chr(10).join(lines_out)
 
 
@@ -10782,77 +10121,63 @@ def cosine_sim(vec1, vec2):
 
 
 def semantic_dedup(pairs_list, lang="zh"):
-    """对指定语言列做语义去重，保留较长句子"""
+    """对段落级结构做语义去重：
+       - lang="zh": 跨段落对 zh_para 去重（保留较长者）
+       - lang="en": 段落内对英文句子去重（保留较长者）
+    """
     if _dedup_model is None:
         print("[dedup] Model not loaded, skipping.")
         return pairs_list, 0
 
-    target_sents = []
-    for i, (en, zh) in enumerate(pairs_list):
-        text = zh if lang == "zh" else en
-        target_sents.append((text.strip(), i))
-
-    non_empty = [(t, idx) for t, idx in target_sents if t]
-    if len(non_empty) < 2:
+    if lang == "zh":
+        # 跨段落对 zh_para 去重
+        items = [(i, (item.get("zh_para") or "").strip()) for i, item in enumerate(pairs_list)]
+        non_empty = [(i, t) for i, t in items if t]
+        if len(non_empty) < 2:
+            return pairs_list, 0
+        texts = [t for _, t in non_empty]
+        embeddings = _dedup_model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
+        removed = set()
+        for a in range(len(non_empty)):
+            if a in removed:
+                continue
+            for b in range(a + 1, len(non_empty)):
+                if b in removed:
+                    continue
+                ta, tb = non_empty[a][1], non_empty[b][1]
+                if ta == tb or cosine_sim(embeddings[a], embeddings[b]) > DEDUP_THRESHOLD:
+                    idx = non_empty[a][0] if len(ta) <= len(tb) else non_empty[b][0]
+                    removed.add(idx)
+        if removed:
+            deduped = [p for i, p in enumerate(pairs_list) if i not in removed]
+            print(f"[dedup] Removed {len(removed)} duplicate {lang} paragraph(s). Remaining: {len(deduped)}")
+            return deduped, len(removed)
         return pairs_list, 0
 
-    print(f"[dedup] {lang.upper()}: computing embeddings for {len(non_empty)} sentences...")
-    texts = [t for t, _ in non_empty]
-    embeddings = _dedup_model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
-
-    removed_indices = set()
-    dedup_count = 0
-
-    for i in range(len(non_empty)):
-        if i in removed_indices:
+    # lang="en": 段落内句子级去重
+    total = 0
+    for item in pairs_list:
+        sents = item.get("sentences", [])
+        target = [(si, (s.get("en") or "").strip()) for si, s in enumerate(sents) if (s.get("en") or "").strip()]
+        if len(target) < 2:
             continue
-        for j in range(i + 1, len(non_empty)):
-            if j in removed_indices:
+        texts = [t for _, t in target]
+        embeddings = _dedup_model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
+        removed = set()
+        for a in range(len(target)):
+            if target[a][0] in removed:
                 continue
-
-            orig_i_idx = non_empty[i][1]
-            orig_j_idx = non_empty[j][1]
-
-            if lang == "zh":
-                text_a = str(pairs_list[orig_i_idx][1]).strip()
-                text_b = str(pairs_list[orig_j_idx][1]).strip()
-            else:
-                text_a = str(pairs_list[orig_i_idx][0]).strip()
-                text_b = str(pairs_list[orig_j_idx][0]).strip()
-
-            # 先检查纯字符串重复（快）
-            if text_a == text_b:
-                len_a, len_b = len(text_a), len(text_b)
-                if len_a <= len_b:
-                    removed_indices.add(orig_i_idx)
-                    dedup_count += 1
-                    print(f"  [dedup REMOVED] {lang}: len={len_a}")
-                else:
-                    removed_indices.add(orig_j_idx)
-                    dedup_count += 1
-                    print(f"  [dedup REMOVED] {lang}: len={len_b}")
-                continue
-
-            # 语义重复
-            sim = cosine_sim(embeddings[i], embeddings[j])
-            if sim > DEDUP_THRESHOLD:
-                len_a, len_b = len(text_a), len(text_b)
-                if len_a <= len_b:
-                    removed_indices.add(orig_i_idx)
-                    dedup_count += 1
-                    print(f"  [dedup REMOVED] {lang}: len={len_a} sim={sim:.3f}")
-                else:
-                    removed_indices.add(orig_j_idx)
-                    dedup_count += 1
-                    print(f"  [dedup REMOVED] {lang}: len={len_b} sim={sim:.3f}")
-
-    if removed_indices:
-        deduped = [pairs_list[i] for i in range(len(pairs_list)) if i not in removed_indices]
-        print(f"[dedup] Removed {dedup_count} duplicate {lang} sentence(s). Remaining: {len(deduped)}")
-        return deduped, dedup_count
-    else:
-        print(f"[dedup] No {lang} duplicates found.")
-        return pairs_list, 0
+            for b in range(a + 1, len(target)):
+                if target[b][0] in removed:
+                    continue
+                ta, tb = target[a][1], target[b][1]
+                if ta == tb or cosine_sim(embeddings[a], embeddings[b]) > DEDUP_THRESHOLD:
+                    removed.add(target[a][0] if len(ta) <= len(tb) else target[b][0])
+        if removed:
+            item["sentences"] = [s for s in sents if s not in [sents[ri] for ri in removed]]
+            total += len(removed)
+    print(f"[dedup] Removed {total} duplicate {lang} sentence(s).")
+    return pairs_list, total
 
 
 # ===== 去重前先保存原始 pairs 到 pairs_archive.json =====
@@ -10870,10 +10195,19 @@ pairs, en_removed = semantic_dedup(pairs, lang="en")
 
 print(f"\n[dedup] Summary: ZH removed: {zh_removed}, EN removed: {en_removed}")
 print(f"[dedup] Final pairs count: {len(pairs)}")
+
+# ===== 压平为旧格式输出（方案B：step3 兼容） =====
+flat_pairs = []
+for item in pairs:
+    for s in item.get("sentences", []):
+        flat_pairs.append([s.get("en", ""), s.get("zh", "")])
+
 # ===== 写入去重后的 pairs 到 pairs.json（供 step3 使用） =====
 with open("/tmp/pairs.json", "w", encoding="utf-8") as f:
     json.dump(pairs, f, ensure_ascii=False, indent=2)
-print("[dedup] WRITTEN: deduped pairs saved to pairs.json")
+with open("/tmp/pairs_flat.json", "w", encoding="utf-8") as f:
+    json.dump(flat_pairs, f, ensure_ascii=False, indent=2)
+print("[dedup] WRITTEN: deduped pairs saved to pairs.json (structured) and pairs_flat.json")
 
 # ===== 重建 pair_html（基于去重后的 pairs） =====
 pair_html = rebuild_pair_html(pairs)
@@ -11154,30 +10488,30 @@ print(f"[translate_article] HTML done, {len(pairs)} pairs")
 
 
 def build_key_word_map_from_pairs(pairs_list):
-    """从 pairs 中提取 EN关键词 -> ZH官方翻译 的对照表"""
+    """从段落级 pairs 中提取 EN关键词 -> ZH官方翻译 的对照表"""
     word_map = {}
     stopwords = {"that","this","with","have","your","from","they","them","will","what","when",
                  "into","been","were","also","just","more","than","then","there","their",
                  "which","still","only","such","very","even","does","dont","cant","wont","should"}
-    
-    for en, zh in pairs_list:
-        en_str = str(en).strip() if en else ""
-        zh_str = str(zh).strip() if zh else ""
-        if not en_str or not zh_str:
+
+    for item in pairs_list:
+        if not isinstance(item, dict):
             continue
-        
-        en_kws = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split() 
-                  if len(w.strip(".!,:;!?()-_[]")) > 2 and w.strip(".!,:;!?()-_[]").lower() not in stopwords]
-        if not en_kws:
-            continue
-        
-        zh_parts = re.split(r"[，。；]", zh_str)
-        for kw in en_kws:
-            for zp in zh_parts:
-                zp = zp.strip()
-                if 3 <= len(zp) <= 10:
-                    word_map[kw] = zp
-    
+        zh_para = (item.get("zh_para") or "").strip()
+        for s in item.get("sentences", []):
+            en_str = (s.get("en") or "").strip()
+            if not en_str or not zh_para:
+                continue
+            en_kws = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split()
+                      if len(w.strip(".!,:;!?()-_[]")) > 2 and w.strip(".!,:;!?()-_[]").lower() not in stopwords]
+            if not en_kws:
+                continue
+            zh_parts = re.split(r"[，。；]", zh_para)
+            for kw in en_kws:
+                for zp in zh_parts:
+                    zp = zp.strip()
+                    if 3 <= len(zp) <= 10:
+                        word_map[kw] = zp
     return word_map
 
 
@@ -11193,21 +10527,25 @@ def translate_title_with_word_map(en_title, pairs_list, word_map):
         return None
     
     candidates = []
-    for en, zh in pairs_list:
-        en_str = str(en).strip() if en else ""
-        zh_str = str(zh).strip() if zh else ""
-        if not en_str or not zh_str:
+    for item in pairs_list:
+        if not isinstance(item, dict):
             continue
-        
-        en_kws_found = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split() 
-                        if w.strip(".!,:;!?()-_[]").lower() in known_kws]
-        if en_kws_found:
-            candidates.append((en, zh, en_kws_found))
+        zh_para = (item.get("zh_para") or "").strip()
+        if not zh_para:
+            continue
+        for s in item.get("sentences", []):
+            en_str = (s.get("en") or "").strip()
+            if not en_str:
+                continue
+            en_kws_found = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split()
+                            if w.strip(".!,:;!?()-_[]").lower() in known_kws]
+            if en_kws_found:
+                candidates.append((en_str, zh_para, en_kws_found))
     
     if not candidates:
         return None
     
-    zh_sents = [zh for en, zh, _ in candidates]
+    zh_sents = list(dict.fromkeys(zh for _, zh, _ in candidates))
     aliyun_full = aliyun_translate_title(en_title)
     
     if not aliyun_full and zh_sents:
