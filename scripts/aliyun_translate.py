@@ -39,11 +39,20 @@ def aliyun_translate(text, access_key_id, access_key_secret):
     return ''
 
 def extract_words(pairs):
-    """从pairs中提取所有独特的英文单词（纯字母，长度>=2）"""
+    """从pairs中提取所有独特的英文单词（纯字母，长度>=2），支持多种pair格式"""
     import re
     words = set()
-    for en, zh in pairs:
-        for w in re.findall(r'\b[A-Za-z]{2,}\b', en):
+    for item in pairs:
+        en = ""
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            en = item[0]  # [en, zh] 或 [en, zh, ...]
+        elif isinstance(item, dict):
+            en = item.get("en", item.get("english", ""))  # {"en": ..., "zh": ...}
+        elif isinstance(item, str):
+            en = item  # 纯字符串
+        if not en:
+            continue
+        for w in re.findall(r'\b[A-Za-z]{2,}\b', str(en)):
             w_lower = w.lower()
             if len(w_lower) >= 2:
                 words.add(w_lower)

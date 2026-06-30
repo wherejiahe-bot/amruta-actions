@@ -8,7 +8,7 @@ from aliyun_translate import extract_words, build_word_map
 
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
     article = json.load(f)
-with open("/tmp/pairs.json", encoding="utf-8") as f:
+with open("/tmp/pairs_flat.json", encoding="utf-8") as f:
     pairs = json.load(f)
 
 raw_date = article["date"]
