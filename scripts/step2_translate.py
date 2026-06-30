@@ -9040,7 +9040,7 @@ def llm_sentence_align(en_sents, zh_paragraphs, model="mistralai/mistral-small-4
 
 Example: [[0, 2, "exact"], [1, null, "no_match"], [2, 2, "exact"], [3, 2, "partial"]]
 """
-    api_key = os.environ.get("NVIDIA_API_KEY", "") or os.environ.get("NVAPI_KEY", "") or "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"
+    api_key = os.environ.get("NVIDIA_API_KEY", "") or os.environ.get("NVAPI_KEY", "")
     if not api_key:
         print("[llm_align] NVIDIA_API_KEY 未设置，回退空结果")
         return [[s, "", "aliyun"] for s in en_sents]
@@ -9082,6 +9082,11 @@ Example: [[0, 2, "exact"], [1, null, "no_match"], [2, 2, "exact"], [3, 2, "parti
         return aligned
     except Exception as e:
         print(f"[llm_align] API调用失败: {e}")
+        # fallback: 把中文原文分配给第一个句子，保留中文信息
+        if zh_paragraphs and zh_paragraphs[0].strip():
+            print(f"[llm_align] 使用回退对齐：保留中文原文到首句")
+            return [[en_sents[0], zh_paragraphs[0], "positional"]] + \
+                   [[s, "", "positional"] for s in en_sents[1:]]
         return [[s, "", "aliyun"] for s in en_sents]
 
 
@@ -9308,19 +9313,27 @@ def search_ima_kb(query_text, phase_name, date_str=None):
                             fallback_src_url = src_url
                             fallback_parsed_pairs = parsed_pairs
                 else:
-                    # No date to validate, just use first valid doc
-                    if parsed_pairs:
-                        if src_url:
-                            sahaja_link = src_url
-                            print(f'[translate_article] IMA source link: {sahaja_link[:80]}')
-                        pairs = parsed_pairs
-                        print(f'[translate_article] IMA KB OK: {len(pairs)} pairs')
+                    # src_url is empty BUT we have a date to match → save as fallback
+                    if date_str:
+                        print(f'[translate_article]   doc#{doc_idx} empty source URL but date_str is set, saving as fallback')
+                        if fallback_text is None and parsed_pairs:
+                            fallback_text = zh_text
+                            fallback_src_url = src_url
+                            fallback_parsed_pairs = parsed_pairs
+                    else:
+                        # No date to validate at all, just use first valid doc
+                        if parsed_pairs:
+                            if src_url:
+                                sahaja_link = src_url
+                                print(f'[translate_article] IMA source link: {sahaja_link[:80]}')
+                            pairs = parsed_pairs
+                            print(f'[translate_article] IMA KB OK: {len(pairs)} pairs')
+                            return True
+                        
+                        zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
+                        pairs = [["", s] for s in zh_sentences]
+                        print(f'[translate_article] IMA KB OK (zh-only): {len(pairs)} zh-sentences')
                         return True
-                    
-                    zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
-                    pairs = [["", s] for s in zh_sentences]
-                    print(f'[translate_article] IMA KB OK (zh-only): {len(pairs)} zh-sentences')
-                    return True
                     
             except Exception as e:
                 print(f'[translate_article]   doc#{doc_idx} download/parse failed: {e}')
@@ -9479,9 +9492,14 @@ if not pairs:
         import re as _re
         _m = _re.search(r'/(\d{4})[-/](\d{2})[-/]?(\d{2})', link)
         if _m:
-            search_date = f"{_m.group(1)}-{_m.group(2)}-{_m.group(3)}"
-            if search_date != date_str:
-                print(f"[translate_article] Phase1 using date from source URL: {search_date} (article date was {date_str})")
+            extracted = f"{_m.group(1)}-{_m.group(2)}-{_m.group(3)}"
+            # Trust link date only if MM-DD matches article date (same talk)
+            if extracted[5:] == date_str[5:]:
+                search_date = extracted
+                if search_date != date_str:
+                    print(f"[translate_article] Phase1 using date from source URL: {search_date} (article date was {date_str})")
+            else:
+                print(f"[translate_article] WARNING: link date {extracted} != article date {date_str}, trusting article date")
     
     phase1_ok = search_ima_kb_with_retry(search_date, "Phase1(date)", date_str=date_str)
 
@@ -9508,10 +9526,14 @@ if not pairs:
             correct_date = f'{_m.group(1)}-{_m.group(2)}-{_day}'
     
     if correct_date and correct_date != date_str:
-        print(f'[translate_article] Found correct date from source URL: {correct_date} (amruta.today said {date_str})')
-        phase1_retry_ok = search_ima_kb_with_retry(correct_date, "Phase1(correct_date_from_URL)", date_str=date_str)
-        if phase1_retry_ok:
-            print(f'[translate_article] Phase1 succeeded with correct date from URL!')
+        # Only use link date if MM-DD matches article date (same talk)
+        if correct_date[5:] == date_str[5:]:
+            print(f'[translate_article] Found correct date from source URL: {correct_date} (amruta.today said {date_str})')
+            phase1_retry_ok = search_ima_kb_with_retry(correct_date, "Phase1(correct_date_from_URL)", date_str=date_str)
+            if phase1_retry_ok:
+                print(f'[translate_article] Phase1 succeeded with correct date from URL!')
+        else:
+            print(f'[translate_article] SKIP Phase1 retry: link date {correct_date} != article date {date_str} (different talk)')
     else:
         print(f'[translate_article] No correct date found in source URL, moving to Phase 2')
     

@@ -11,6 +11,26 @@ with open("/tmp/article_raw.json", encoding="utf-8") as f:
 with open("/tmp/pairs_flat.json", encoding="utf-8") as f:
     pairs = json.load(f)
 
+# === 内容验证：检查中文翻译是否为空 ===
+if isinstance(pairs, list):
+    zh_count = 0
+    total = len(pairs)
+    for p in pairs:
+        if isinstance(p, dict):
+            zh = p.get("zh", "") or ""
+        elif isinstance(p, (list, tuple)) and len(p) >= 2:
+            zh = p[1] or ""
+        else:
+            zh = ""
+        if zh.strip():
+            zh_count += 1
+    zh_pct = (zh_count / total * 100) if total > 0 else 0
+    print(f"[step3] 内容验证: {zh_count}/{total} 对 ({zh_pct:.1f}%) 有中文翻译")
+    if zh_count == 0:
+        print("[step3] ⚠️⚠️⚠️ 警告：所有中文段落均为空！邮件将只有英文内容。")
+    elif zh_pct < 30:
+        print(f"[step3] ⚠️ 警告：中文覆盖率仅 {zh_pct:.1f}%，低于 30%")
+
 raw_date = article["date"]
 title_en = article["title"]
 
