@@ -58,19 +58,36 @@ def extract_words(pairs):
                 words.add(w_lower)
     return sorted(words)
 
-def build_word_map(words, access_key_id, access_key_secret):
-    """翻译所有单词，返回 {word: translation} 字典"""
+def build_word_map(words, access_key_id, access_key_secret, max_workers=20):
+    """并行翻译所有单词，返回 {word: translation} 字典"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
     word_map = {}
     total = len(words)
-    for i, w in enumerate(words, 1):
+    lock = threading.Lock()
+    counter = [0]  # 用列表存计数器以便闭包修改
+
+    def translate_one(w):
         try:
             t = aliyun_translate(w, access_key_id, access_key_secret)
             if t and t.lower() != w.lower():
-                word_map[w] = t
-            if i % 5 == 0:
-                print(f"[translate] 阿里云翻译进度: {i}/{total}")
+                return w, t
         except Exception as e:
             print(f"[translate] 翻译失败 [{w}]: {e}")
+        return w, None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(translate_one, w): w for w in words}
+        for f in as_completed(futures):
+            w, t = f.result()
+            if t:
+                word_map[w] = t
+            with lock:
+                counter[0] += 1
+                if counter[0] % 10 == 0 or counter[0] == total:
+                    print(f"[translate] 阿里云翻译进度: {counter[0]}/{total}")
+
     print(f"[translate] 翻译完成: {len(word_map)}/{total} 个单词")
     return word_map
 
