@@ -1,6 +1,8 @@
 name: Daily Amruta Push
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: '0 20 * * *'
   workflow_dispatch:
@@ -41,6 +43,7 @@ jobs:
           IMA_API_KEY: ${{ secrets.IMA_API_KEY }}
           IMA_KB_ID: ${{ secrets.IMA_KB_ID }}
           QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
         run: python3 scripts/step2_translate.py
