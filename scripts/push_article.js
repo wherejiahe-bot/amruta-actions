@@ -614,7 +614,8 @@ async function main() {
   let articlesSha = null;
 
   if (existing) {
-    articles = JSON.parse(Buffer.from(existing.content, 'base64').toString('utf-8'));
+    const decoded = Buffer.from(existing.content, 'base64').toString('utf-8').replace(/^\uFEFF+/, '');
+    articles = JSON.parse(decoded);
     articlesSha = existing.sha;
     // Remove existing entry for same date (replace)
     articles = articles.filter(a => a.date !== date);
