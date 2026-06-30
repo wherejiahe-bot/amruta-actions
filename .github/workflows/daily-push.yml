@@ -1,8 +1,6 @@
 name: Daily Amruta Push
 
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: '0 20 * * *'
   workflow_dispatch:

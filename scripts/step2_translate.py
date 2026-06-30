@@ -9725,6 +9725,12 @@ else:
 
 
         pairs = [list(p) for p in aligned]
+        # 转换为结构化格式（与 do_alignment_and_audit 输出一致），
+        # 避免下游 flatten/rebuild_pair_html 期望 dict 格式时崩溃
+        pairs = [{"en_para": en, "zh_para": zh,
+                  "sentences": [{"en": en, "zh": zh}]} for en, zh in pairs]
+        
+        print(f"[translate_article] Aliyun done: {len(pairs)} sentences, converted to structured format")
 
 
 
@@ -9736,11 +9742,6 @@ else:
 
 
 
-
-
-
-
-        print(f"[translate_article] Aliyun done: {len(pairs)} sentences")
 
 
 
