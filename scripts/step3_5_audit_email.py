@@ -189,53 +189,53 @@ def run_audit():
         src_url = ""
 
     if doc_title:
-        note = f"✅ 来源于 sahaja.live 官方翻译（IMA KB）— 文档：{doc_title[:60]}"
+        note = f"[OK] 来源于 sahaja.live 官方翻译（IMA KB）— 文档：{doc_title[:60]}"
         if src_url:
             note += f" | source: {src_url[:60]}"
-        results["翻译来源"] = ("✅", note)
+        results["翻译来源"] = ("[OK]", note)
     elif "机器翻译" in html_content or "非官方" in html_content:
-        results["翻译来源"] = ("❌", "非官方翻译（阿里云机器翻译降级）")
+        results["翻译来源"] = ("[FAIL]", "非官方翻译（阿里云机器翻译降级）")
         failures.append("翻译来源：降级为机器翻译")
     else:
-        results["翻译来源"] = ("❌", "IMA KB 官方翻译未找到，且无降级标注")
+        results["翻译来源"] = ("[FAIL]", "IMA KB 官方翻译未找到，且无降级标注")
         failures.append("翻译来源：IMA KB 无结果且无标注")
 
     # === 1. 结构完整性 ===
     struct = check_html_structure(html_content)
     missing = [k for k, v in struct.items() if not v]
     if missing:
-        results["结构完整性"] = ("❌", f"缺少元素：{', '.join(missing)}")
+        results["结构完整性"] = ("[FAIL]", f"缺少元素：{', '.join(missing)}")
         failures.append(f"结构：缺少 {', '.join(missing)}")
     else:
-        results["结构完整性"] = ("✅", "标题、日期、分隔线、链接完整")
+        results["结构完整性"] = ("[OK]", "标题、日期、分隔线、链接完整")
 
     # === 2. 英中交替 ===
     en_count, cn_count, paras = count_bilingual_pairs(html_content)
     alt_issues = check_alternation(paras)
     if alt_issues:
-        results["英中交替"] = ("❌", "; ".join(alt_issues[:5]))
+        results["英中交替"] = ("[FAIL]", "; ".join(alt_issues[:5]))
         failures.append(f"交替：{len(alt_issues)} 个问题")
     else:
-        results["英中交替"] = ("✅", f"交替排列正确（英文 {en_count} 段，中文 {cn_count} 段）")
+        results["英中交替"] = ("[OK]", f"交替排列正确（英文 {en_count} 段，中文 {cn_count} 段）")
 
     # === 3. 段落数匹配 ===
     diff = abs(en_count - cn_count)
     if diff > 2:
-        results["段落数匹配"] = ("❌", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 {diff}")
+        results["段落数匹配"] = ("[FAIL]", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 {diff}")
         failures.append(f"段落差 {diff} (>2)")
     elif diff == 2:
-        results["段落数匹配"] = ("⚠️", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 2 段")
+        results["段落数匹配"] = ("[WARN]", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 2 段")
         warnings.append(f"段落差 2")
     else:
-        results["段落数匹配"] = ("✅", f"英文 {en_count} 段，中文 {cn_count} 段，匹配")
+        results["段落数匹配"] = ("[OK]", f"英文 {en_count} 段，中文 {cn_count} 段，匹配")
 
     # === 4. 中文非空检查（P0 阻塞） ===
     zh_empty = re.findall(r'<div class="zh-text">\s*</div>', html_content)
     if zh_empty:
-        results["中文非空"] = ("❌", f"发现 {len(zh_empty)} 处空中文段落")
+        results["中文非空"] = ("[FAIL]", f"发现 {len(zh_empty)} 处空中文段落")
         failures.append(f"{len(zh_empty)} 处空中文")
     else:
-        results["中文非空"] = ("✅", "无空中文段落")
+        results["中文非空"] = ("[OK]", "无空中文段落")
 
     # === 5. 底部链接（P0 阻塞） ===
     link_checks = {}
@@ -248,7 +248,7 @@ def run_audit():
     link_checks["order_correct"] = amruta_pos < sahaja_pos if amruta_pos >= 0 and sahaja_pos >= 0 else False
     
     if all(link_checks.values()):
-        results["底部链接"] = ("✅", "两个链接都存在且顺序正确（amruta.today 在前，sahaja.live 在后）")
+        results["底部链接"] = ("[OK]", "两个链接都存在且顺序正确（amruta.today 在前，sahaja.live 在后）")
     else:
         issues = []
         if not link_checks["has_amruta_today"]:
@@ -257,23 +257,23 @@ def run_audit():
             issues.append("缺少 sahaja.live")
         if not link_checks["order_correct"]:
             issues.append("顺序错误")
-        results["底部链接"] = ("❌", "; ".join(issues))
+        results["底部链接"] = ("[FAIL]", "; ".join(issues))
         failures.append(f"链接：{'; '.join(issues)}")
 
     # === 6. 翻译来源标注 ===
     has_source_note = "翻译来源" in html_content or "sahaja.live 官方翻译" in html_content
     if has_source_note:
-        results["来源标注"] = ("✅", "邮件中包含翻译来源说明")
+        results["来源标注"] = ("[OK]", "邮件中包含翻译来源说明")
     else:
-        results["来源标注"] = ("⚠️", "邮件中缺少翻译来源说明")
+        results["来源标注"] = ("[WARN]", "邮件中缺少翻译来源说明")
         warnings.append("来源标注缺失")
 
     # === 7. Agnes AI 对齐质量验证 ===
     align_passed, align_details = verify_alignment_with_agnes(html_content)
     if align_passed:
-        results["Agnes AI 对齐验证"] = ("✅", align_details)
+        results["Agnes AI 对齐验证"] = ("[OK]", align_details)
     else:
-        results["Agnes AI 对齐验证"] = ("❌", align_details)
+        results["Agnes AI 对齐验证"] = ("[FAIL]", align_details)
         failures.append(f"对齐质量：{align_details}")
 
     # === 8. 翻译通顺度 ===
@@ -281,12 +281,12 @@ def run_audit():
     if cn_paras:
         short_trans = sum(1 for p in cn_paras if len(strip_html(p)) < 5)
         if short_trans > cn_count * 0.1 and cn_count > 10:
-            results["翻译通顺度"] = ("⚠️", f"过短句子 {short_trans} 处，可能为 1:N 未正确合并")
+            results["翻译通顺度"] = ("[WARN]", f"过短句子 {short_trans} 处，可能为 1:N 未正确合并")
             warnings.append(f"{short_trans} 处过短翻译")
         else:
-            results["翻译通顺度"] = ("✅", "翻译长度分布正常")
+            results["翻译通顺度"] = ("[OK]", "翻译长度分布正常")
     else:
-        results["翻译通顺度"] = ("❌", "无中文段落")
+        results["翻译通顺度"] = ("[FAIL]", "无中文段落")
         failures.append("无中文段落")
 
     # ── Build report ──
@@ -310,10 +310,10 @@ def run_audit():
 
     report_lines.append("\n## 总评\n")
     if has_fail:
-        report_lines.append(f"**判定**: ❌ **不通过**（{len(failures)} 个失败项）")
+        report_lines.append(f"**判定**: [FAIL] **不通过**（{len(failures)} 个失败项）")
         report_lines.append("\n### 失败项\n")
         for f_item in failures:
-            report_lines.append(f"- ❌ {f_item}")
+            report_lines.append(f"- [FAIL] {f_item}")
         report_lines.append("\n### 行动要求\n")
         report_lines.append("**必须修复后重新推送**。当前邮件发送已阻止。")
         report_lines.append("修复方向：")
@@ -326,13 +326,13 @@ def run_audit():
         if any("对齐" in f for f in failures):
             report_lines.append("- 对齐：Agnes AI 检测到质量问题，检查对齐逻辑")
     elif has_warn:
-        report_lines.append(f"**判定**: ⚠️ **有条件通过**（{len(warnings)} 个警告项）")
+        report_lines.append(f"**判定**: [WARN] **有条件通过**（{len(warnings)} 个警告项）")
         report_lines.append("\n### 警告项\n")
         for w_item in warnings:
-            report_lines.append(f"- ⚠️ {w_item}")
+            report_lines.append(f"- [WARN] {w_item}")
         report_lines.append("\n邮件继续发送，但建议后续修复。")
     else:
-        report_lines.append("**判定**: ✅ **通过**")
+        report_lines.append("**判定**: [OK] **通过**")
 
     report = "\n".join(report_lines)
 
