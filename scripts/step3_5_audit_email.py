@@ -1,4 +1,4 @@
-﻿"""
+"""
 Step 3.5: Email content quality audit with Agnes AI alignment check.
 Validates the generated bilingual email before sending.
 If audit FAILS -> blocks email sending, triggers rework.
@@ -26,7 +26,7 @@ def strip_html(text):
 
 def extract_paragraphs(html):
     """Extract all <p>...</p> content in order."""
-    return re.findall(r"<p>(.*?)</p>", html, re.DOTALL)
+    return re.findall(r"<p[^>]*>(.*?)</p>", html, re.DOTALL)
 
 def count_bilingual_pairs(html):
     """Count EN/CN alternating pairs."""
@@ -53,7 +53,7 @@ def check_html_structure(html):
     """Check required HTML elements."""
     checks = {}
     checks["has_title"] = bool(re.search(r"<h[123]", html))
-    checks["has_date"] = bool(re.search(r"\\d{4}-\\d{2}-\\d{2}", html))
+    checks["has_date"] = bool(re.search(r"\d{4}-\d{2}-\d{2}", html))
     checks["has_hr"] = "<hr" in html
     checks["has_links"] = "href=" in html
     return checks
@@ -210,11 +210,25 @@ def run_audit():
     warnings = []
 
     # === P0: 翻译来源判定（第一条） ===
-    try:
-        with open("/tmp/ima_kb_doc_title.txt", encoding="utf-8") as f:
-            doc_title = f.read().strip()
-    except:
-        doc_title = ""
+    # Read from IMA KB search results JSON (written by step2_translate.py)
+    ima_data = load_ima_search_results()
+    doc_title = ""
+    src_url = ""
+    if ima_data:
+        for item in ima_data:
+            if item.get("selected"):
+                doc_title = item.get("title", "")
+                break
+        if not doc_title:
+            doc_title = ima_data[0].get("title", "") if ima_data else ""
+
+    # Fallback: try reading txt files for backward compatibility
+    if not doc_title:
+        try:
+            with open("/tmp/ima_kb_doc_title.txt", encoding="utf-8") as f:
+                doc_title = f.read().strip()
+        except:
+            pass
     try:
         with open("/tmp/ima_kb_source_url.txt", encoding="utf-8") as f:
             src_url = f.read().strip()
@@ -232,6 +246,7 @@ def run_audit():
     else:
         results["翻译来源"] = ("[FAIL]", "IMA KB 官方翻译未找到，且无降级标注")
         failures.append("翻译来源：IMA KB 无结果且无标注")
+
 
     # === 1. 结构完整性 ===
     struct = check_html_structure(html_content)
