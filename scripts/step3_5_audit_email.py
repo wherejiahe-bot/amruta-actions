@@ -339,14 +339,14 @@ def run_audit():
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print(f"\ud83d\udccb 验收报告已写入: {REPORT_PATH}")
+    print(f"[Report] 验收报告已写入: {REPORT_PATH}")
     if has_fail:
-        print(f"  \u274c 判定: 不通过（{len(failures)} 个失败项）")
+        print(f"  [FAIL] 判定: 不通过（{len(failures)} 个失败项）")
         print(f"  邮件发送已阻止，需要修复后重新运行")
     elif has_warn:
-        print(f"  \u26a0\ufe0f 判定: 有条件通过（{len(warnings)} 个警告项）")
+        print(f"  [WARN] 判定: 有条件通过（{len(warnings)} 个警告项）")
     else:
-        print(f"  \u2705 判定: 通过")
+        print(f"  [OK] 判定: 通过")
     print(report)
 
     # Exit code: 0 = pass (with or without warnings), 1 = fail (blocks email)
