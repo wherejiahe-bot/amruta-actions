@@ -25,33 +25,31 @@ def strip_html(text):
     return re.sub(r"<[^>]+>", "", text).strip()
 
 
-def extract_en_zh_divs(html):
-    """Extract <div class="en-text"> and <div class="zh-text"> content from the actual HTML structure."""
-    en_divs = re.findall(r'<div class="en-text">(.*?)</div>', html, re.DOTALL)
-    zh_divs = re.findall(r'<div class="zh-text">(.*?)</div>', html, re.DOTALL)
-    return en_divs, zh_divs
+def extract_paragraphs(html):
+    """Extract all <p>...</p> content, including <p style=...> variants."""
+    return re.findall(r"<p[^>]*>(.*?)</p>", html, re.DOTALL)
 
 
 def count_bilingual_pairs(html):
-    """Count EN/CN pairs using the actual HTML structure (div.en-text / div.zh-text)."""
-    en_divs, zh_divs = extract_en_zh_divs(html)
-    return len(en_divs), len(zh_divs), en_divs, zh_divs
+    """Count EN/CN alternating pairs from <p> tags in email_body.html."""
+    paras = extract_paragraphs(html)
+    has_cjk = [bool(re.search(r"[\u4e00-\u9fff]", p)) for p in paras]
+    en_count = sum(1 for h in has_cjk if not h)
+    cn_count = sum(1 for h in has_cjk if h)
+    return en_count, cn_count, paras
 
 
-def check_alternation(en_divs, zh_divs):
-    """Check EN/ZH alternation pattern using actual div structure."""
+def check_alternation(paras):
+    """Check EN/CN alternation pattern."""
     issues = []
-    # Build merged list alternating en, zh
-    max_len = max(len(en_divs), len(zh_divs))
-    for i in range(max_len):
-        if i < len(en_divs):
-            has_chinese = bool(re.search(r"[\u4e00-\u9fff]", en_divs[i]))
-            if has_chinese:
-                issues.append(f"英文段 #{i+1}：包含中文字符")
-        if i < len(zh_divs):
-            has_chinese = bool(re.search(r"[\u4e00-\u9fff]", zh_divs[i]))
-            if not has_chinese:
-                issues.append(f"中文段 #{i+1}：不包含中文字符")
+    for i, p in enumerate(paras):
+        has_chinese = bool(re.search(r"[\u4e00-\u9fff]", p))
+        if i == 0 and has_chinese:
+            issues.append(f"第 {i+1} 段：首段应为英文，实际为中文")
+        elif i > 0:
+            prev_has = bool(re.search(r"[\u4e00-\u9fff]", paras[i - 1]))
+            if has_chinese == prev_has:
+                issues.append(f"第 {i+1} 段：相邻段落语言重复（预期交替）")
     return issues
 
 
@@ -64,8 +62,6 @@ def check_html_structure(html):
     checks["has_links"] = "href=" in html
     return checks
 
-
-# ── Agnes AI alignment verification ─────────────────────────────
 
 def verify_alignment_with_agnes(html):
     """
@@ -265,8 +261,8 @@ def run_audit():
         results["结构完整性"] = ("[OK]", "标题、日期、分隔线、链接完整")
 
     # === 2. 英中交替 ===
-    en_count, cn_count, en_divs, zh_divs = count_bilingual_pairs(html_content)
-    alt_issues = check_alternation(en_divs, zh_divs)
+    en_count, cn_count, paras = count_bilingual_pairs(html_content)
+    alt_issues = check_alternation(paras)
     if alt_issues:
         results["英中交替"] = ("[FAIL]", "; ".join(alt_issues[:5]))
         failures.append(f"交替：{len(alt_issues)} 个问题")
@@ -331,8 +327,8 @@ def run_audit():
         failures.append(f"对齐质量：{align_details}")
 
     # === 8. 翻译通顺度 ===
-    if zh_divs:
-        short_trans = sum(1 for p in zh_divs if len(strip_html(p)) < 5)
+    if paras:
+        short_trans = sum(1 for p in paras if len(strip_html(p)) < 5)
         if short_trans > cn_count * 0.1 and cn_count > 10:
             results["翻译通顺度"] = ("[WARN]", f"过短句子 {short_trans} 处，可能为 1:N 未正确合并")
             warnings.append(f"{short_trans} 处过短翻译")
