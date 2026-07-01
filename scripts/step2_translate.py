@@ -8645,7 +8645,11 @@ import numpy as np
 
 
 
-from sentence_transformers import SentenceTransformer
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
+    print("[step2] sentence_transformers not installed, BGE dedup skipped")
 
 
 
@@ -9914,7 +9918,11 @@ link = sahaja_link or link
 # 不去动前面的对齐、翻译逻辑
 
 import numpy as np
-from sentence_transformers import SentenceTransformer as STModel
+try:
+    from sentence_transformers import SentenceTransformer as STModel
+except ImportError:
+    STModel = None
+    print("[dedup] sentence_transformers not installed, skipping semantic dedup")
 
 DEDUP_THRESHOLD = 0.85  # 余弦相似度阈值，>0.85 视为重复
 DEDUP_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"  # 轻量级，384维
