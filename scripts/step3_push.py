@@ -46,7 +46,7 @@ if os.path.exists("/tmp/sahaja_link.txt"):
         sahaja_link = f.read().strip()
 else:
     print("[step3] sahaja_link.txt NOT FOUND (OK if first run)")
-source_url = sahaja_link or "https://amruta.today/"
+source_url = sahaja_link or "https://sahaja.live/"
 
 # 阿里云翻译：预翻译文章中所有独特英文单词
 ak_id = os.environ.get("ALIYUN_ACCESS_KEY_ID", "")

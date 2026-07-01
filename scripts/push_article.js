@@ -188,13 +188,13 @@ footer .sep{color:#ddd;margin:0 8px}
 <nav class="nav-bar">
   <a href="../index.html">← 返回首页</a>
   <a href="../wordbook.html" style="display:flex;align-items:center;gap:5px;font-size:13px;color:#8a7a6a;text-decoration:none" id="nav-wb-link">📖 <span id="nav-wb-count"></span></a>
-  <a href="https://amruta.today/" target="_blank">Amruta.today</a>
+  <a href="https://sahaja.live/" target="_blank">Sahaja Live</a>
 </nav>
 <div class="article-header">
   <div class="article-date">${dateDisplay}</div>
   <h1>${escapeHtml(title)}</h1>
   <div class="chinese-title">${escapeHtml(titleCn)}</div>
-  <div class="article-source">Source: <a href="${sourceUrl || 'https://amruta.today/'}" target="_blank">${sourceUrl ? ((sourceUrl.match(/https?:\/\/([^/]+)/) || [])[1] || sourceUrl) : 'amruta.today'}</a></div>
+  <div class="article-source">Source: <a href="${sourceUrl || 'https://sahaja.live/'}" target="_blank">${sourceUrl ? ((sourceUrl.match(/https?:\/\/([^/]+)/) || [])[1] || sourceUrl) : 'sahaja.live'}</a></div>
 </div>
 <div class="divider">◇</div>
 <div class="article-content">${contentBlocks}
@@ -204,7 +204,7 @@ footer .sep{color:#ddd;margin:0 8px}
   <span class="sep">·</span>
   <a href="../wordbook.html">📖 单词本</a>
   <span class="sep">·</span>
-  <a href="https://amruta.today/" target="_blank">Amruta.today</a>
+  <a href="https://sahaja.live/" target="_blank">Sahaja Live</a>
   <span class="sep">·</span>
   <a href="https://github.com/wherejiahe-bot/amruta-daily-archive" target="_blank">GitHub</a>
 </footer>
@@ -542,7 +542,7 @@ footer a:hover{color:#6a5a4a}
   <span class="count">共 <strong>${count}</strong> 篇讲话</span>
   <div style="display:flex;gap:10px;align-items:center">
     <a href="wordbook.html" class="rss-link" id="idx-wb-link">📖 单词本 <span id="idx-wb-count"></span></a>
-    <a href="https://amruta.today/" class="rss-link" target="_blank">Amruta.today →</a>
+    <a href="https://sahaja.live/" class="rss-link" target="_blank">Sahaja Live →</a>
   </div>
 </div>
 <script>
@@ -558,7 +558,7 @@ footer a:hover{color:#6a5a4a}
 <div class="article-list">${cards}
 </div>
 <footer>
-  <a href="https://amruta.today/" target="_blank">Amruta.today</a>
+  <a href="https://sahaja.live/" target="_blank">Sahaja Live</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/wherejiahe-bot/amruta-daily-archive" target="_blank">GitHub</a>
 </footer>
