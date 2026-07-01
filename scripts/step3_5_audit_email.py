@@ -1,4 +1,4 @@
-"""
+﻿"""
 Step 3.5: Email content quality audit with Agnes AI alignment check.
 Validates the generated bilingual email before sending.
 If audit FAILS -> blocks email sending, triggers rework.
