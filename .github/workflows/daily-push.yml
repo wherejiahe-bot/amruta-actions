@@ -58,8 +58,8 @@ jobs:
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
         run: |
-          echo "Audit FAILED. Retrying translation with enhanced debug..."
-          python3 scripts/step2_translate.py --debug
+          echo "Audit FAILED. Retrying translation..."
+          python3 scripts/step2_translate.py
           python3 scripts/step3_push.py
 
       - name: Re-audit after rework
