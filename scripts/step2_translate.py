@@ -9146,6 +9146,10 @@ def search_ima_kb(query_text, phase_name, date_str=None):
                         
                         if parsed_pairs:
                             pairs = parsed_pairs
+                            # Convert to structured format
+                            pairs = [{"en_para": en, "zh_para": zh,
+                                      "sentences": [{"en": en, "zh": zh}]} for en, zh in pairs]
+                            print("[translate_article] Converted IMA pairs: %d" % len(pairs))
                             print(f'[translate_article] IMA KB OK: {len(pairs)} pairs, {sum(1 for _,z in pairs if z.strip())} have zh')
                             best_matched = True
                             ima_translation_fail_reason = ""  # ✅ 成功，清空之前 Phase 的失败原因
