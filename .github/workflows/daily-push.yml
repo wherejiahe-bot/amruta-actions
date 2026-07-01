@@ -46,10 +46,23 @@ jobs:
 
       - name: Step3.5 - Email content + source audit
         id: audit
-        run: python3 scripts/step3_5_audit_email.py
+        run: python3 scripts/step3_5_audit_email.py || true
+
+      - name: Check audit result
+        id: check
+        run: |
+          if [ -f /tmp/audit_report.md ]; then
+            if grep -q "判定.*不通过" /tmp/audit_report.md; then
+              echo "AUDIT_RESULT=fail" >> $GITHUB_OUTPUT
+            else
+              echo "AUDIT_RESULT=pass" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "AUDIT_RESULT=fail" >> $GITHUB_OUTPUT
+          fi
 
       - name: Rework - Retry translation if audit failed
-        if: steps.audit.outcome == 'failure'
+        if: steps.check.outputs.AUDIT_RESULT == 'fail'
         env:
           IMA_CLIENT_ID: ${{ secrets.IMA_CLIENT_ID }}
           IMA_API_KEY: ${{ secrets.IMA_API_KEY }}
@@ -61,21 +74,17 @@ jobs:
           echo "Audit FAILED. Retrying translation..."
           python3 scripts/step2_translate.py
           python3 scripts/step3_push.py
-
-      - name: Re-audit after rework
-        if: steps.audit.outcome == 'failure'
-        id: reaudit
-        run: python3 scripts/step3_5_audit_email.py
+          python3 scripts/step3_5_audit_email.py || true
 
       - name: Step4 - Send email
-        if: steps.audit.outcome == 'success' || steps.reaudit.outcome == 'success'
+        if: steps.check.outputs.AUDIT_RESULT != 'fail'
         env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
         run: python3 scripts/step4_email.py
 
       - name: Notify failure
-        if: steps.audit.outcome == 'failure' && (!steps.reaudit || steps.reaudit.outcome == 'failure')
+        if: steps.check.outputs.AUDIT_RESULT == 'fail'
         run: |
-          echo "::error::Audit failed after rework. Email NOT sent. Check /tmp/audit_report.md for details."
+          echo "::error::Audit failed. Email NOT sent. Check /tmp/audit_report.md for details."
           cat /tmp/audit_report.md
