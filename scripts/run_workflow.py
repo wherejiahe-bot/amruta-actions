@@ -234,7 +234,7 @@ if smtp_user and smtp_pass:
 
 <hr style="border:none;border-top:1px solid #eee;margin:24px 0 16px 0;">
 <p style="color:#aaa;font-size:0.8em;margin:0;word-break:break-all;">
-  <a href="https://amruta.today/" style="color:#aaa;">https://amruta.today/</a>
+  <a href="https://sahaja.live/" style="color:#aaa;">https://sahaja.live/</a>
   <br>
   <a href="{source_url}" style="color:#aaa;">{source_url}</a>
 </p>
