@@ -39,6 +39,8 @@ content_raw = item.get("content", "")
 if isinstance(content_raw, dict): content_raw = content_raw.get("rendered", "")
 content_text = re.sub(r"<[^>]+>", "", content_raw).strip()
 link = item.get("link", "")
+# amruta.today 为永久链接，amruta.org 为旧短暂链接
+link = link.replace("www.amruta.org", "amruta.today") if link else ""
 log(f"Title: {title_en}")
 
 article = {"date": date_str, "title": title_en, "content": content_text, "link": link}

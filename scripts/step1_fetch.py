@@ -37,6 +37,8 @@ if isinstance(content_raw, dict):
     content_raw = content_raw.get("rendered", "")
 content_text = re.sub(r"<[^>]+>", "", content_raw).strip()
 link = item.get("link", "")
+# amruta.today 为永久链接，amruta.org 为旧短暂链接
+link = link.replace("www.amruta.org", "amruta.today") if link else ""
 
 article = {"date": date_clean, "title": title, "content": content_text, "link": link}
 with open("/tmp/article_raw.json", "w", encoding="utf-8") as f:

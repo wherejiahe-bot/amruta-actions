@@ -1083,6 +1083,7 @@ content  = article["content"]
 
 
 link     = article.get("link", "")
+amruta_link = link.replace("www.amruta.org", "amruta.today") if link else ""  # amruta.today 为永久链接，amruta.org 为旧短暂链接
 
 
 
@@ -10227,7 +10228,6 @@ except: dd = date_str
 
 
 
-amruta_link = link
 link = sahaja_link or link
 
 
