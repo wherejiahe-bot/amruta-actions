@@ -1,4 +1,4 @@
-﻿"""
+"""
 Step 3.5: Email content quality audit with Agnes AI alignment check.
 Validates the generated bilingual email before sending.
 If audit FAILS -> blocks email sending, triggers rework.
@@ -164,6 +164,39 @@ Only output valid JSON, nothing else.
 
 # ── Main auditor ─────────────────────────────────────────────────
 
+
+def load_ima_search_results():
+    """Load IMA KB search results from JSON file written by step2_translate.py."""
+    results_path = "/tmp/ima_kb_search_results.json"
+    if not os.path.exists(results_path):
+        return None
+    try:
+        with open(results_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data
+    except Exception:
+        return None
+
+
+def format_ima_search_report(search_results):
+    """Format IMA KB search results for audit report."""
+    if not search_results:
+        return "| IMA KB 搜索结果 | - | 无搜索结果文件（step2 未执行或未写入） |"
+    
+    lines = []
+    lines.append("| IMA KB 搜索结果 | INFO | 搜索到 %d 个文档，尝试前 5 个 |" % len(search_results))
+    for sr in search_results:
+        title = sr.get("title", "N/A")
+        picked = sr.get("picked", "")
+        stype = sr.get("type", "")
+        selected = " <-- 被选中" if sr.get("selected") else ""
+        marker = "**" if "SELECTED" in picked else ""
+        lines.append("  %s%s [%s]%s%s" % (marker, title[:50], stype, picked.replace("YES <-- SELECTED", "✓ 被尝试").replace("NO (limited)", "✗ 未尝试"), selected))
+    
+    return "\n".join(lines)
+
+
+
 def run_audit():
     with open(INPUT_PATH, encoding="utf-8") as f:
         html = html_content = f.read()
@@ -297,6 +330,12 @@ def run_audit():
     report_lines.append(f"**检查时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     report_lines.append(f"**文章**: {raw.get('title', 'unknown')} ({raw.get('date', 'unknown')})\n")
     report_lines.append(f"**检查文件**: {INPUT_PATH}\n")
+    ima_results = load_ima_search_results()
+    ima_report = format_ima_search_report(ima_results)
+    # === IMA KB 搜索结果展示 ===
+    if ima_results is not None:
+        report_lines.append(ima_report)
+        report_lines.append("")
     report_lines.append("\n## 检查结果\n")
     report_lines.append("| 维度 | 结果 | 备注 |")
     report_lines.append("|------|------|------|")

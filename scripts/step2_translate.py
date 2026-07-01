@@ -8237,7 +8237,7 @@ def parse_ima_bilingual_md(full_text):
 
 
 
-    支持两种格式：
+    支持三种格式：
 
 
 
@@ -8246,6 +8246,8 @@ def parse_ima_bilingual_md(full_text):
 
 
       2. inline（少数）：EN语句+ZH翻译 在同一段落
+
+      3. separated（新增）：所有英文段落先列完，所有中文段落紧随其后（EN-all-first / ZH-all-after）
 
 
 
@@ -8428,6 +8430,65 @@ def parse_ima_bilingual_md(full_text):
 
 
 
+
+
+    # === Step 4b: 检测 EN-all-first / ZH-all-after 分离式格式 ===
+    # 某些 IMA 文档不是 EN-ZH 交替，而是所有英文段落先列完，再所有中文段落紧随其后
+    # 检测方法：从 start 开始扫描，找到第一个纯中文块的位置
+    # 如果从该位置到末尾全都是中文块，则判定为分离式格式
+    separated_en_blocks = []
+    separated_zh_blocks = []
+    first_cn_idx = None
+    for bi in range(start, len(blocks)):
+        b = blocks[bi]
+        if is_meta(b):
+            continue
+        if first_cn_idx is None and plain_en(b):
+            separated_en_blocks.append(b)
+        elif first_cn_idx is None and has_cn(b):
+            first_cn_idx = bi
+            separated_zh_blocks.append(b)
+        elif first_cn_idx is not None and has_cn(b) and not plain_en(b):
+            separated_zh_blocks.append(b)
+        elif first_cn_idx is not None and plain_en(b):
+            # 又出现英文段，说明不是分离式，回退到 interleaved
+            first_cn_idx = None
+            break
+        else:
+            # 短段落跳过
+            pass
+
+    if first_cn_idx is not None and separated_en_blocks and separated_zh_blocks:
+        # 确认为分离式格式：所有英文在前，所有中文在后
+        print('[parse_ima_bilingual_md] Detected EN-all-first / ZH-all-after format: %d EN blocks, %d ZH blocks' % (len(separated_en_blocks), len(separated_zh_blocks)))
+        
+        # 合并 EN 块为英文句子列表，合并 ZH 块为中文句子列表
+        en_all = " ".join(separated_en_blocks)
+        zh_all = " ".join(separated_zh_blocks)
+        
+        en_sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', en_all) if s.strip()]
+        zh_sents = [s.strip() for s in re.split(r'[。！？]', zh_all) if s.strip()]
+        
+        # 简单对齐：逐句配对，剩余的处理
+        sep_pairs = []
+        min_len = min(len(en_sents), len(zh_sents))
+        for si in range(min_len):
+            sep_pairs.append([en_sents[si], zh_sents[si]])
+        # 多余的 EN 句子（无翻译）
+        for si in range(min_len, len(en_sents)):
+            sep_pairs.append([en_sents[si], ""])
+        # 多余的 ZH 句子（无对应英文）
+        for si in range(min_len, len(zh_sents)):
+            sep_pairs.append(["", zh_sents[si]])
+        
+        print('[parse_ima_bilingual_md] Separated format: %d pairs created' % len(sep_pairs))
+        
+        # 使用这个结果，跳过后面的 interleaved 解析
+        result = sep_pairs
+        if result:
+            print('[parse_ima_bilingual_md] source=%s' % source_url[:60])
+            print('[parse_ima_bilingual_md] %d pairs, %d have zh (separated format)' % (len(result), sum(1 for _,z in result if z.strip())))
+            return source_url, result
 
     # Step 4: interleaved 格式解析（EN→ZH 段落交替）
 
@@ -8923,6 +8984,30 @@ def search_ima_kb(query_text, phase_name, date_str=None):
         MAX_DOCS_PER_PHASE = 5
         docs_to_try = ordered_docs[:MAX_DOCS_PER_PHASE]
         print(f'[translate_article]   trying first {len(docs_to_try)} docs (limited from {len(ordered_docs)})')
+
+        # === 记录 IMA KB 搜索结果（供审核/用户查看） ===
+        search_results = []
+        for idx, doc in enumerate(ordered_docs):
+            title = doc.get("title", "")
+            picked = "YES <-- SELECTED" if idx < MAX_DOCS_PER_PHASE else "NO (limited)"
+            is_zh = "中文标题" if sum(1 for c in title if "\u4e00" <= c <= "\u9fff") >= 3 else "英文标题"
+            search_results.append({"title": title, "picked": picked, "type": is_zh})
+        # Mark which doc was actually selected
+        try:
+            selected_title = ima_kb_doc_title if "ima_kb_doc_title" in dir() else ""
+            for sr in search_results:
+                if sr["title"] == selected_title:
+                    sr["selected"] = True
+                    break
+        except Exception:
+            pass
+        try:
+            with open("/tmp/ima_kb_search_results.json", "w", encoding="utf-8") as rf:
+                json.dump(search_results, rf, ensure_ascii=False, indent=2)
+            print("[translate_article] IMA KB search results written to /tmp/ima_kb_search_results.json")
+        except Exception as e:
+            print("[translate_article] Failed to write search results: %s" % e)
+
         
         for doc_idx, doc in enumerate(docs_to_try):
             fid = doc.get("media_id", "")

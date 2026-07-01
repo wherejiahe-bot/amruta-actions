@@ -48,6 +48,15 @@ jobs:
         id: audit
         run: python3 scripts/step3_5_audit_email.py || true
 
+      - name: Display IMA KB search results
+        run: |
+          echo "## IMA KB Search Results"
+          if [ -f /tmp/ima_kb_search_results.json ]; then
+            python3 -c 'import json; data=json.load(open("/tmp/ima_kb_search_results.json")); [print("  - %s [%s] %s" %% (d["title"],d["type"],d["picked"])) for d in data]'
+          else
+            echo "No IMA KB search results file found"
+          fi
+
       - name: Check audit result
         id: check
         run: |
