@@ -1,4 +1,4 @@
-"""
+﻿"""
 
 
 
@@ -8677,344 +8677,7 @@ from sentence_transformers import SentenceTransformer
 
 
 
-try:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    _bg = SentenceTransformer("BAAI/bge-small-zh-v1.5")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-except:
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    _bg = None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def dp_align(sim_matrix, skip_cost=0.6):
-
-
-
-    """
-
-
-
-    Bertalign 式 DP 句对齐。
-
-
-
-    sim_matrix: (M, N) numpy array, cosine similarity in [0, 1]
-
-
-
-    skip_cost: 跳行/跳列的惩罚（默认0.6，对应相似度阈值0.4）
-
-
-
-    
-
-
-
-    Returns: list of (en_idx, zh_idx_or_None, similarity)
-
-
-
-    """
-
-
-
-    M, N = sim_matrix.shape
-
-
-
-    cost_mat = 1.0 - sim_matrix
-
-
-
-    INF = 1e9
-
-
-
-    
-
-
-
-    dp = np.full((M + 1, N + 1), INF, dtype=np.float64)
-
-
-
-    ch = np.zeros((M + 1, N + 1), dtype=np.int8)  # 0=start, 1=1:1, 2=skip_EN, 3=skip_ZH
-
-
-
-    
-
-
-
-    dp[0, 0] = 0.0
-
-
-
-    for i in range(1, M + 1):
-
-
-
-        dp[i, 0] = dp[i-1, 0] + skip_cost
-
-
-
-        ch[i, 0] = 2
-
-
-
-    for j in range(1, N + 1):
-
-
-
-        dp[0, j] = dp[0, j-1] + skip_cost
-
-
-
-        ch[0, j] = 3
-
-
-
-    
-
-
-
-    for i in range(1, M + 1):
-
-
-
-        for j in range(1, N + 1):
-
-
-
-            c11 = dp[i-1, j-1] + cost_mat[i-1, j-1]
-
-
-
-            c_skip_en = dp[i-1, j] + skip_cost
-
-
-
-            c_skip_zh = dp[i, j-1] + skip_cost
-
-
-
-            best = min(c11, c_skip_en, c_skip_zh)
-
-
-
-            dp[i, j] = best
-
-
-
-            if best == c11: ch[i, j] = 1
-
-
-
-            elif best == c_skip_en: ch[i, j] = 2
-
-
-
-            else: ch[i, j] = 3
-
-
-
-    
-
-
-
-    # Backtrack
-
-
-
-    result = []
-
-
-
-    i, j = M, N
-
-
-
-    while i > 0 and j > 0:
-
-
-
-        if ch[i, j] == 1:
-
-
-
-            result.append((i-1, j-1, float(sim_matrix[i-1, j-1])))
-
-
-
-            i -= 1; j -= 1
-
-
-
-        elif ch[i, j] == 2:
-
-
-
-            result.append((i-1, None, 0.0))
-
-
-
-            i -= 1
-
-
-
-        else:
-
-
-
-            j -= 1
-
-
-
-    while i > 0:
-
-
-
-        result.append((i-1, None, 0.0))
-
-
-
-        i -= 1
-
-
-
-    result.reverse()
-
-
-
-    return result
-
-
-
-
-
-
-
-def llm_sentence_align(en_sents, zh_paragraphs, model="mistralai/mistral-small-4-119b-2603"):
-    """调用LLM（Mistral Small 4 via NVIDIA NIM）做句级对齐。"""
+def llm_sentence_align(en_sents, zh_paragraphs):
     if not en_sents:
         return []
     en_text = "\n".join(f"[{i}] {s}" for i, s in enumerate(en_sents))
@@ -9045,12 +8708,12 @@ def llm_sentence_align(en_sents, zh_paragraphs, model="mistralai/mistral-small-4
 
 Example: [[0, 2, "exact"], [1, null, "no_match"], [2, 2, "exact"], [3, 2, "partial"]]
 """
-    api_key = os.environ.get("NVIDIA_API_KEY", "") or os.environ.get("NVAPI_KEY", "")
+    api_key = os.environ.get("AGNES_API_KEY", "") or os.environ.get("AGNES_AI_KEY", "")
     if not api_key:
-        print("[llm_align] NVIDIA_API_KEY 未设置，回退空结果")
+        print("[llm_align] AGNES_API_KEY not set, falling back to empty")
         return [[s, "", "aliyun"] for s in en_sents]
     data = json.dumps({
-        "model": model,
+        "model": "agnes-2.0-flash",
         "messages": [
             {"role": "system", "content": "You are a precise bilingual alignment assistant. Output only JSON."},
             {"role": "user", "content": prompt}
@@ -9059,7 +8722,7 @@ Example: [[0, 2, "exact"], [1, null, "no_match"], [2, 2, "exact"], [3, 2, "parti
         "max_tokens": 5120,
     }).encode("utf-8")
     req = urllib.request.Request(
-        "https://integrate.api.nvidia.com/v1/chat/completions",
+        "https://apihub.agnes-ai.com/v1/chat/completions",
         data=data,
         method="POST",
         headers={
@@ -9086,14 +8749,12 @@ Example: [[0, 2, "exact"], [1, null, "no_match"], [2, 2, "exact"], [3, 2, "parti
             aligned.append([en_s, zh_s, "llm"])
         return aligned
     except Exception as e:
-        print(f"[llm_align] API调用失败: {e}")
-        # fallback: 把中文原文分配给第一个句子，保留中文信息
+        print(f"[llm_align] Agnes API call failed: {e}")
         if zh_paragraphs and zh_paragraphs[0].strip():
-            print(f"[llm_align] 使用回退对齐：保留中文原文到首句")
+            print(f"[llm_align] Using fallback alignment: keeping Chinese text in first sentence")
             return [[en_sents[0], zh_paragraphs[0], "positional"]] + \
                    [[s, "", "positional"] for s in en_sents[1:]]
         return [[s, "", "aliyun"] for s in en_sents]
-
 
 def do_alignment_and_audit():
     """句级对齐：对每段分别切句、分别调用LLM对齐，输出段落级结构"""

@@ -16,34 +16,25 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: {node-version: '20'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
 
       - name: Step1 - Fetch article
         env:
           DATE_OVERRIDE: ${{ github.event.inputs.date_override }}
         run: python3 scripts/step1_fetch.py
 
-      - name: Cache AI models
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/huggingface/
-          key: align-models-v2
-
-      - name: Install alignment deps
+      - name: Install deps
         run: |
-          pip install sentence-transformers numpy matplotlib dateparser lingtrain-aligner
-          python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('LaBSE')"
-
+          pip install numpy dateparser
       - name: Step2 - Search + Translate
         env:
           IMA_CLIENT_ID: ${{ secrets.IMA_CLIENT_ID }}
           IMA_API_KEY: ${{ secrets.IMA_API_KEY }}
           IMA_KB_ID: ${{ secrets.IMA_KB_ID }}
-          QWEN_API_KEY: ${{ secrets.QWEN_API_KEY }}
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
         run: python3 scripts/step2_translate.py
 
       - name: Step3 - Push to GitHub
