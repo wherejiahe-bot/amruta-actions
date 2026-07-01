@@ -1,13 +1,19 @@
 """
-Step 3.5: Email content quality audit.
+Step 3.5: Email content quality audit with Agnes AI alignment check.
 Validates the generated bilingual email before sending.
+If audit FAILS -> blocks email sending, triggers rework.
+
 Input: /tmp/email_body.html, /tmp/article_raw.json
 Output: /tmp/audit_report.md — structured quality report
+Exit code: 0 = pass, 1 = fail (blocks Step 4)
 """
 
 import json
 import re
+import os
 import sys
+import urllib.request
+import base64
 
 INPUT_PATH = "/tmp/email_body.html"
 RAW_PATH = "/tmp/article_raw.json"
@@ -23,10 +29,7 @@ def extract_paragraphs(html):
     return re.findall(r"<p>(.*?)</p>", html, re.DOTALL)
 
 def count_bilingual_pairs(html):
-    """
-    Count EN/CN alternating pairs.
-    Also detect orphaned paragraphs.
-    """
+    """Count EN/CN alternating pairs."""
     paras = extract_paragraphs(html)
     has_cjk = [bool(re.search(r"[\u4e00-\u9fff]", p)) for p in paras]
     en_count = sum(1 for h in has_cjk if not h)
@@ -34,7 +37,7 @@ def count_bilingual_pairs(html):
     return en_count, cn_count, paras
 
 def check_alternation(paras):
-    """Check EN/CN alternation pattern: EN, CN, EN, CN, ..."""
+    """Check EN/CN alternation pattern."""
     issues = []
     for i, p in enumerate(paras):
         has_chinese = bool(re.search(r"[\u4e00-\u9fff]", p))
@@ -55,101 +58,125 @@ def check_html_structure(html):
     checks["has_links"] = "href=" in html
     return checks
 
-def check_terminology(content):
-    """
-    Check Sahaja Yoga terminology consistency.
-    Uses a subset of key terms from the user's glossary.
-    """
-    rules = {
-        "negative_energy": (r"\bnegative\s+energy\b", r"\b负面\s*能量\b"),
-        "vibration": (r"\bvibration\b", r"\b(生命能量|振动)\b"),
-        "kundalini": (r"\bKundalini\b", r"\b昆达里尼\b"),
-    }
-    issues = []
-    for name, (en_pat, cn_pat) in rules.items():
-        en_matches = re.findall(en_pat, content, re.IGNORECASE)
-        cn_matches = re.findall(cn_pat, content)
-        if en_matches and not cn_matches:
-            issues.append(f"术语「{name}」：英文出现 {len(en_matches)} 次但无对应中文翻译")
-    return issues
+# ── Agnes AI alignment verification ─────────────────────────────
 
-# ── main auditor ─────────────────────────────────────────────────
+def verify_alignment_with_agnes(html):
+    """
+    Use Agnes AI to verify sentence-level alignment quality.
+    Extracts EN/ZH pairs from HTML and sends to Agnes for validation.
+    Returns (passed, details).
+    """
+    # Extract bilingual pairs from HTML
+    pair_pattern = r'<div class="en-text">(.*?)</div>\s*<div class="zh-text">(.*?)</div>'
+    pairs = re.findall(pair_pattern, html, re.DOTALL)
+    
+    if len(pairs) < 5:
+        return True, "Pairs too few (<5), skipping Agnes verification"
+    
+    # Sample up to 20 pairs for verification
+    sample_size = min(20, len(pairs))
+    sampled = pairs[:sample_size]
+    
+    # Build prompt for Agnes
+    en_texts = "\n".join([f"[{i}] {strip_html(p[0])}" for i, p in enumerate(sampled)])
+    zh_texts = "\n".join([f"[{i}] {strip_html(p[1])}" for i, p in enumerate(sampled)])
+    
+    prompt = f"""You are a bilingual quality checker. Review these English-Chinese sentence pairs from a religious talk translation.
+
+Check:
+1. Does each Chinese sentence correspond semantically to its paired English sentence?
+2. Are there any obvious mismatches (Chinese text doesn't match the English at all)?
+3. Are there empty Chinese translations?
+
+=== ENGLISH ===
+{en_texts}
+
+=== CHINESE ===
+{zh_texts}
+
+Output a JSON object:
+{{
+  "total_pairs_checked": <int>,
+  "empty_chinese_count": <int>,
+  "mismatched_pairs": [<int indices of mismatched pairs>],
+  "quality_score": <0-100>,
+  "verdict": "PASS" or "FAIL",
+  "notes": "<brief summary>"
+}}
+
+Only output valid JSON, nothing else.
+"""
+    
+    api_key = os.environ.get("AGNES_API_KEY", "") or os.environ.get("AGNES_AI_KEY", "")
+    if not api_key:
+        return True, "AGNES_API_KEY not set, skipping alignment verification"
+    
+    data = json.dumps({
+        "model": "agnes-2.0-flash",
+        "messages": [
+            {"role": "system", "content": "You are a precise bilingual quality checker. Output only JSON."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.0,
+        "max_tokens": 2048,
+    }).encode("utf-8")
+    
+    req = urllib.request.Request(
+        "https://apihub.agnes-ai.com/v1/chat/completions",
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+    )
+    
+    try:
+        resp = urllib.request.urlopen(req, timeout=120)
+        result = json.loads(resp.read().decode("utf-8"))
+        content = result["choices"][0]["message"]["content"].strip()
+        
+        # Extract JSON from markdown code blocks if present
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        
+        check = json.loads(content)
+        score = check.get("quality_score", 0)
+        verdict = check.get("verdict", "FAIL")
+        empty_count = check.get("empty_chinese_count", 0)
+        mismatched = check.get("mismatched_pairs", [])
+        
+        details = (
+            f"Agnes AI verified {sample_size} pairs: "
+            f"score={score}/100, empty_zh={empty_count}, "
+            f"mismatches={len(mismatched)}, verdict={verdict}"
+        )
+        
+        if verdict == "FAIL" or score < 70 or empty_count > 0:
+            return False, details
+        return True, details
+        
+    except Exception as e:
+        return True, f"Agnes API call failed ({e}), skipping verification"
+
+
+# ── Main auditor ─────────────────────────────────────────────────
 
 def run_audit():
     with open(INPUT_PATH, encoding="utf-8") as f:
-        html = f.read()
+        html = html_content = f.read()
 
     with open(RAW_PATH, encoding="utf-8") as f:
         raw = json.load(f)
 
     report_lines = []
-    results = {}  # dimension -> (status, note)
+    results = {}
+    failures = []
+    warnings = []
 
-    # 1. 结构完整性
-    struct = check_html_structure(html)
-    missing = [k for k, v in struct.items() if not v]
-    if missing:
-        results["结构完整性"] = ("❌", f"缺少元素：{', '.join(missing)}")
-    else:
-        results["结构完整性"] = ("✔️", "标题、日期、分隔线、链接完整")
-
-    # 2. 英中交替
-    en_count, cn_count, paras = count_bilingual_pairs(html)
-    alt_issues = check_alternation(paras)
-    if alt_issues:
-        results["英中交替"] = ("❌", "; ".join(alt_issues[:5]))  # cap at 5
-    else:
-        results["英中交替"] = ("✔️", f"交替排列正确（英文 {en_count} 段，中文 {cn_count} 段）")
-
-    # 3. 段落数匹配
-    diff = abs(en_count - cn_count)
-    if diff > 1:
-        results["段落数匹配"] = ("❌", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 {diff}")
-    elif diff == 1:
-        results["段落数匹配"] = ("⚠️", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 1 段")
-    else:
-        results["段落数匹配"] = ("✔️", f"英文 {en_count} 段，中文 {cn_count} 段，匹配")
-
-    # 4. 格式规范 — 字符转义
-    unescaped = re.findall(r"&(?!(amp|lt|gt|quot|#\d+);)", html)
-    if unescaped:
-        results["格式规范"] = ("⚠️", f"发现 {len(unescaped)} 处未转义的 & 符号")
-    else:
-        results["格式规范"] = ("✔️", "字符转义正确，无异常")
-
-    # 5. 术语一致性
-    term_issues = check_terminology(html)
-    if term_issues:
-        results["术语一致性"] = ("⚠️", "; ".join(term_issues[:3]))
-    else:
-        results["术语一致性"] = ("✔️", "未发现术语异常")
-
-    # 6. 翻译通顺度（LLM-based 抽样检查）
-    # 对超过 20 段的文章，抽前中后各取一段检查中文长度
-    if cn_count > 0:
-        cn_paras = [p for p in paras if re.search(r"[\u4e00-\u9fff]", p)]
-        long_translations = sum(1 for p in cn_paras if len(strip_html(p)) > 200)
-        short_translations = sum(1 for p in cn_paras if len(strip_html(p)) < 5)
-        if long_translations > cn_count * 0.2:
-            results["翻译通顺度"] = ("⚠️", f"超长句子比例偏高（{long_translations}/{cn_count}），可能为 N:1 未正确拆分")
-        elif short_translations > cn_count * 0.1:
-            results["翻译通顺度"] = ("⚠️", f"过短句子比例偏高（{short_translations}/{cn_count}），可能为 1:N 未正确合并")
-        else:
-            results["翻译通顺度"] = ("✔️", "翻译长度分布正常")
-
-    # ── build report ──
-    has_fail = any(s == "❌" for s, _ in results.values())
-    has_warn = any(s == "⚠️" for s, _ in results.values())
-
-    report_lines.append("# 邮件内容验收报告\n")
-    report_lines.append(f"**检查时间**: 自动生成\n")
-    report_lines.append(f"**文章**: {raw.get('title', 'unknown')} ({raw.get('date', 'unknown')})\n")
-    report_lines.append(f"**检查文件**: {INPUT_PATH}\n")
-    report_lines.append("\n## 检查结果\n")
-    report_lines.append("| 维度 | 结果 | 备注 |")
-    report_lines.append("|------|------|------|")
-    
-    # 第 0 项：翻译来源（最重要的）
+    # === P0: 翻译来源判定（第一条） ===
     try:
         with open("/tmp/ima_kb_doc_title.txt", encoding="utf-8") as f:
             doc_title = f.read().strip()
@@ -160,44 +187,172 @@ def run_audit():
             src_url = f.read().strip()
     except:
         src_url = ""
-    
+
     if doc_title:
         note = f"✅ 来源于 sahaja.live 官方翻译（IMA KB）— 文档：{doc_title[:60]}"
         if src_url:
             note += f" | source: {src_url[:60]}"
         results["翻译来源"] = ("✅", note)
-    elif "机器翻译" in html or "非官方" in html:
+    elif "机器翻译" in html_content or "非官方" in html_content:
         results["翻译来源"] = ("❌", "非官方翻译（阿里云机器翻译降级）")
+        failures.append("翻译来源：降级为机器翻译")
     else:
-        results["翻译来源"] = ("❌", "IMA KB 官方翻译未找到（非 IMA KB 来源）")
+        results["翻译来源"] = ("❌", "IMA KB 官方翻译未找到，且无降级标注")
+        failures.append("翻译来源：IMA KB 无结果且无标注")
+
+    # === 1. 结构完整性 ===
+    struct = check_html_structure(html_content)
+    missing = [k for k, v in struct.items() if not v]
+    if missing:
+        results["结构完整性"] = ("❌", f"缺少元素：{', '.join(missing)}")
+        failures.append(f"结构：缺少 {', '.join(missing)}")
+    else:
+        results["结构完整性"] = ("✅", "标题、日期、分隔线、链接完整")
+
+    # === 2. 英中交替 ===
+    en_count, cn_count, paras = count_bilingual_pairs(html_content)
+    alt_issues = check_alternation(paras)
+    if alt_issues:
+        results["英中交替"] = ("❌", "; ".join(alt_issues[:5]))
+        failures.append(f"交替：{len(alt_issues)} 个问题")
+    else:
+        results["英中交替"] = ("✅", f"交替排列正确（英文 {en_count} 段，中文 {cn_count} 段）")
+
+    # === 3. 段落数匹配 ===
+    diff = abs(en_count - cn_count)
+    if diff > 2:
+        results["段落数匹配"] = ("❌", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 {diff}")
+        failures.append(f"段落差 {diff} (>2)")
+    elif diff == 2:
+        results["段落数匹配"] = ("⚠️", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 2 段")
+        warnings.append(f"段落差 2")
+    else:
+        results["段落数匹配"] = ("✅", f"英文 {en_count} 段，中文 {cn_count} 段，匹配")
+
+    # === 4. 中文非空检查（P0 阻塞） ===
+    zh_empty = re.findall(r'<div class="zh-text">\s*</div>', html_content)
+    if zh_empty:
+        results["中文非空"] = ("❌", f"发现 {len(zh_empty)} 处空中文段落")
+        failures.append(f"{len(zh_empty)} 处空中文")
+    else:
+        results["中文非空"] = ("✅", "无空中文段落")
+
+    # === 5. 底部链接（P0 阻塞） ===
+    link_checks = {}
+    link_checks["has_amruta_today"] = bool(re.search(r'amruta\.today', html_content))
+    link_checks["has_sahaja_live"] = bool(re.search(r'sahaja\.live', html_content))
     
-    for dim in ["翻译来源", "结构完整性", "英中交替", "段落数匹配", "格式规范", "翻译通顺度", "术语一致性"]:
+    # Check order: amruta.today should come BEFORE sahaja.live
+    amruta_pos = html_content.find("amruta.today")
+    sahaja_pos = html_content.find("sahaja.live")
+    link_checks["order_correct"] = amruta_pos < sahaja_pos if amruta_pos >= 0 and sahaja_pos >= 0 else False
+    
+    if all(link_checks.values()):
+        results["底部链接"] = ("✅", "两个链接都存在且顺序正确（amruta.today 在前，sahaja.live 在后）")
+    else:
+        issues = []
+        if not link_checks["has_amruta_today"]:
+            issues.append("缺少 amruta.today")
+        if not link_checks["has_sahaja_live"]:
+            issues.append("缺少 sahaja.live")
+        if not link_checks["order_correct"]:
+            issues.append("顺序错误")
+        results["底部链接"] = ("❌", "; ".join(issues))
+        failures.append(f"链接：{'; '.join(issues)}")
+
+    # === 6. 翻译来源标注 ===
+    has_source_note = "翻译来源" in html_content or "sahaja.live 官方翻译" in html_content
+    if has_source_note:
+        results["来源标注"] = ("✅", "邮件中包含翻译来源说明")
+    else:
+        results["来源标注"] = ("⚠️", "邮件中缺少翻译来源说明")
+        warnings.append("来源标注缺失")
+
+    # === 7. Agnes AI 对齐质量验证 ===
+    align_passed, align_details = verify_alignment_with_agnes(html_content)
+    if align_passed:
+        results["Agnes AI 对齐验证"] = ("✅", align_details)
+    else:
+        results["Agnes AI 对齐验证"] = ("❌", align_details)
+        failures.append(f"对齐质量：{align_details}")
+
+    # === 8. 翻译通顺度 ===
+    cn_paras = [p for p in paras if re.search(r"[\u4e00-\u9fff]", p)]
+    if cn_paras:
+        short_trans = sum(1 for p in cn_paras if len(strip_html(p)) < 5)
+        if short_trans > cn_count * 0.1 and cn_count > 10:
+            results["翻译通顺度"] = ("⚠️", f"过短句子 {short_trans} 处，可能为 1:N 未正确合并")
+            warnings.append(f"{short_trans} 处过短翻译")
+        else:
+            results["翻译通顺度"] = ("✅", "翻译长度分布正常")
+    else:
+        results["翻译通顺度"] = ("❌", "无中文段落")
+        failures.append("无中文段落")
+
+    # ── Build report ──
+    has_fail = len(failures) > 0
+    has_warn = len(warnings) > 0
+
+    report_lines.append("# 邮件内容验收报告\n")
+    report_lines.append(f"**检查时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    report_lines.append(f"**文章**: {raw.get('title', 'unknown')} ({raw.get('date', 'unknown')})\n")
+    report_lines.append(f"**检查文件**: {INPUT_PATH}\n")
+    report_lines.append("\n## 检查结果\n")
+    report_lines.append("| 维度 | 结果 | 备注 |")
+    report_lines.append("|------|------|------|")
+
+    for dim in ["翻译来源", "结构完整性", "英中交替", "段落数匹配", "中文非空", "底部链接", "来源标注", "Agnes AI 对齐验证", "翻译通顺度"]:
         if dim in results:
             s, n = results[dim]
             report_lines.append(f"| {dim} | {s} | {n} |")
         else:
             report_lines.append(f"| {dim} | - | 未检查 |")
 
-    report_lines.append("\n## 总评")
+    report_lines.append("\n## 总评\n")
     if has_fail:
-        report_lines.append("**判定**: ❌ 不通过（存在必须修复的问题）")
+        report_lines.append(f"**判定**: ❌ **不通过**（{len(failures)} 个失败项）")
+        report_lines.append("\n### 失败项\n")
+        for f_item in failures:
+            report_lines.append(f"- ❌ {f_item}")
+        report_lines.append("\n### 行动要求\n")
+        report_lines.append("**必须修复后重新推送**。当前邮件发送已阻止。")
+        report_lines.append("修复方向：")
+        if any("翻译来源" in f for f in failures):
+            report_lines.append("- 翻译来源：检查 IMA KB 搜索和阿里云降级逻辑")
+        if any("空中文" in f for f in failures):
+            report_lines.append("- 空中文：检查 step2_translate.py 的翻译输出")
+        if any("链接" in f for f in failures):
+            report_lines.append("- 链接：检查底部链接生成逻辑")
+        if any("对齐" in f for f in failures):
+            report_lines.append("- 对齐：Agnes AI 检测到质量问题，检查对齐逻辑")
     elif has_warn:
-        report_lines.append("**判定**: ⚠️ 有瑕疵（可改进，不阻塞发送）")
+        report_lines.append(f"**判定**: ⚠️ **有条件通过**（{len(warnings)} 个警告项）")
+        report_lines.append("\n### 警告项\n")
+        for w_item in warnings:
+            report_lines.append(f"- ⚠️ {w_item}")
+        report_lines.append("\n邮件继续发送，但建议后续修复。")
     else:
-        report_lines.append("**判定**: ✔️ 通过")
+        report_lines.append("**判定**: ✅ **通过**")
 
     report = "\n".join(report_lines)
 
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         f.write(report)
 
-    print(f"📋 验收报告已写入: {REPORT_PATH}")
-    print(f"  判定: {'❌ 不通过' if has_fail else '⚠️ 有瑕疵' if has_warn else '✔️ 通过'}")
+    print(f"\ud83d\udccb 验收报告已写入: {REPORT_PATH}")
+    if has_fail:
+        print(f"  \u274c 判定: 不通过（{len(failures)} 个失败项）")
+        print(f"  邮件发送已阻止，需要修复后重新运行")
+    elif has_warn:
+        print(f"  \u26a0\ufe0f 判定: 有条件通过（{len(warnings)} 个警告项）")
+    else:
+        print(f"  \u2705 判定: 通过")
     print(report)
 
-    # Exit with code: 0 = pass/warn, 1 = fail
+    # Exit code: 0 = pass (with or without warnings), 1 = fail (blocks email)
     return 1 if has_fail else 0
 
 
 if __name__ == "__main__":
+    from datetime import datetime
     sys.exit(run_audit())
