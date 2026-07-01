@@ -169,7 +169,7 @@ def run_audit():
     elif "机器翻译" in html or "非官方" in html:
         results["翻译来源"] = ("❌", "非官方翻译（阿里云机器翻译降级）")
     else:
-        results["翻译来源"] = ("⚠️", "未找到 IMA KB doc title（可能来自 WP API 缓存或其他来源）")
+        results["翻译来源"] = ("❌", "IMA KB 官方翻译未找到（非 IMA KB 来源）")
     
     for dim in ["翻译来源", "结构完整性", "英中交替", "段落数匹配", "格式规范", "翻译通顺度", "术语一致性"]:
         if dim in results:

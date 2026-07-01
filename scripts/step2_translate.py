@@ -10227,6 +10227,7 @@ except: dd = date_str
 
 
 
+amruta_link = link
 link = sahaja_link or link
 
 
@@ -10505,7 +10506,7 @@ elif pairs:
 # 底部链接
 html += "<p style=color:#aaa;font-size:0.8em;margin:0;word-break:break-all;>"
 # 第一个链接：amruta.today（原始文章）
-first_link = link or ""
+first_link = amruta_link or ""
 html += "<a href=\"" + first_link + "\" style=color:#aaa;>" + first_link + "</a>"
 html += "<br><br>"
 # 第二个链接：sahaja.live（翻译来源）

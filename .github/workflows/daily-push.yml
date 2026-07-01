@@ -53,7 +53,7 @@ jobs:
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
         run: python3 scripts/step3_push.py
 
-      - name: Step3.5 - Email content audit
+      - name: Step3.5 - Email content + source audit
         run: python3 scripts/step3_5_audit_email.py
         continue-on-error: true
 
