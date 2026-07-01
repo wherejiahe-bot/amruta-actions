@@ -148,7 +148,30 @@ def run_audit():
     report_lines.append("\n## 检查结果\n")
     report_lines.append("| 维度 | 结果 | 备注 |")
     report_lines.append("|------|------|------|")
-    for dim in ["结构完整性", "英中交替", "段落数匹配", "格式规范", "翻译通顺度", "术语一致性"]:
+    
+    # 第 0 项：翻译来源（最重要的）
+    try:
+        with open("/tmp/ima_kb_doc_title.txt", encoding="utf-8") as f:
+            doc_title = f.read().strip()
+    except:
+        doc_title = ""
+    try:
+        with open("/tmp/ima_kb_source_url.txt", encoding="utf-8") as f:
+            src_url = f.read().strip()
+    except:
+        src_url = ""
+    
+    if doc_title:
+        note = f"✅ 来源于 sahaja.live 官方翻译（IMA KB）— 文档：{doc_title[:60]}"
+        if src_url:
+            note += f" | source: {src_url[:60]}"
+        results["翻译来源"] = ("✅", note)
+    elif "机器翻译" in html or "非官方" in html:
+        results["翻译来源"] = ("❌", "非官方翻译（阿里云机器翻译降级）")
+    else:
+        results["翻译来源"] = ("⚠️", "未找到 IMA KB doc title（可能来自 WP API 缓存或其他来源）")
+    
+    for dim in ["翻译来源", "结构完整性", "英中交替", "段落数匹配", "格式规范", "翻译通顺度", "术语一致性"]:
         if dim in results:
             s, n = results[dim]
             report_lines.append(f"| {dim} | {s} | {n} |")

@@ -1147,10 +1147,6 @@ link     = article.get("link", "")
 
 
 sahaja_link = None
-ima_translation_fail_reason = ""
-is_machine_translation = False
-ima_kb_doc_title = ""  # 被选为翻译来源的 IMA KB 文档标题（主人验证用，因为 sahaja.live 被墙打不开）
-ima_kb_source_url = ""  # IMA KB 文档的 source URL（sahaja.live 链接）
 
 
 
@@ -9160,7 +9156,7 @@ def search_ima_kb(query_text, phase_name, date_str=None):
 
 
 
-    global sahaja_link, pairs, title_cn, ima_translation_fail_reason, is_machine_translation
+    global sahaja_link, pairs, title_cn
 
 
 
@@ -9253,12 +9249,7 @@ def search_ima_kb(query_text, phase_name, date_str=None):
         fallback_parsed_pairs = None
         best_matched = False
         
-        # 限制每 Phase 最多尝试前 5 个文档，减少 API 调用量（用户要求 2026-06-30）
-        MAX_DOCS_PER_PHASE = 5
-        docs_to_try = ordered_docs[:MAX_DOCS_PER_PHASE]
-        print(f'[translate_article]   trying first {len(docs_to_try)} docs (limited from {len(ordered_docs)})')
-        
-        for doc_idx, doc in enumerate(docs_to_try):
+        for doc_idx, doc in enumerate(ordered_docs):
             fid = doc.get("media_id", "")
             if not fid:
                 continue
@@ -9268,23 +9259,11 @@ def search_ima_kb(query_text, phase_name, date_str=None):
                     f"https://ima.qq.com/openapi/wiki/v1/get_media_info?media_id={fid}",
                     headers=ima_headers
                 )
-                raw_resp = json.loads(urllib.request.urlopen(media_req, timeout=15).read())
-                media_code = raw_resp.get("code", 0)
-                media_msg = raw_resp.get("msg", "")
-                if media_code != 0:
-                    print(f'[translate_article]   doc#{doc_idx} get_media_info ERROR: code={media_code}, msg={media_msg}')
-                    if media_code == 220021:
-                        print(f'[translate_article]   ⛔ IMA KB rate limited (daily quota exhausted), stopping doc iteration')
-                        global ima_translation_fail_reason
-                        ima_translation_fail_reason = f"IMA KB {phase_name}: get_media_info 返回 code={media_code}（{media_msg}）"
-                        break
-                    continue
-                media_data = raw_resp.get("data", {})
+                media_data = json.loads(urllib.request.urlopen(media_req, timeout=15).read()).get("data", {})
                 dl_url = media_data.get("url_info", {}).get("url", "")
                 dl_hdrs = media_data.get("url_info", {}).get("headers", {})
-
+                
                 if not dl_url:
-                    print(f'[translate_article]   doc#{doc_idx} no dl_url in get_media_info response')
                     continue
                 
                 md_req = urllib.request.Request(dl_url, headers=dl_hdrs)
@@ -9305,16 +9284,12 @@ def search_ima_kb(query_text, phase_name, date_str=None):
                         # PERFECT MATCH: this is the correct document
                         print(f'[translate_article]   doc#{doc_idx} DATE MATCH: source={src_full}, article={date_str} ✓✓✓')
                         sahaja_link = src_url
-                        ima_kb_doc_title = doc.get("title", "")
-                        ima_kb_source_url = src_url
                         print(f'[translate_article] IMA source link (verified): {sahaja_link[:80]}')
-                        print(f'[translate_article] IMA KB doc title: {ima_kb_doc_title[:80]}')
                         
                         if parsed_pairs:
                             pairs = parsed_pairs
                             print(f'[translate_article] IMA KB OK: {len(pairs)} pairs, {sum(1 for _,z in pairs if z.strip())} have zh')
                             best_matched = True
-                            ima_translation_fail_reason = ""  # ✅ 成功，清空之前 Phase 的失败原因
                             return True
                         
                         # Chinese-only fallback
@@ -9322,7 +9297,6 @@ def search_ima_kb(query_text, phase_name, date_str=None):
                         pairs = [["", s] for s in zh_sentences]
                         print(f'[translate_article] IMA KB OK (zh-only fallback, verified date): {len(pairs)} zh-sentences')
                         best_matched = True
-                        ima_translation_fail_reason = ""  # ✅ 成功，清空
                         return True
                     
                     elif src_md:
@@ -9352,18 +9326,13 @@ def search_ima_kb(query_text, phase_name, date_str=None):
                             if src_url:
                                 sahaja_link = src_url
                                 print(f'[translate_article] IMA source link: {sahaja_link[:80]}')
-                            ima_kb_doc_title = doc.get("title", "")
-                            ima_kb_source_url = src_url
-                            print(f'[translate_article] IMA KB doc title: {ima_kb_doc_title[:80]}')
                             pairs = parsed_pairs
                             print(f'[translate_article] IMA KB OK: {len(pairs)} pairs')
-                            ima_translation_fail_reason = ""  # ✅ 成功，清空失败原因
                             return True
                         
                         zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
                         pairs = [["", s] for s in zh_sentences]
                         print(f'[translate_article] IMA KB OK (zh-only): {len(pairs)} zh-sentences')
-                        ima_translation_fail_reason = ""  # ✅ 有中文，清空失败原因
                         return True
                     
             except Exception as e:
@@ -9373,20 +9342,12 @@ def search_ima_kb(query_text, phase_name, date_str=None):
         # === FALLBACK: no doc had matching date, use first valid one with WARNING ===
         if fallback_text and fallback_parsed_pairs:
             sahaja_link = fallback_src_url
-            # Fallback - look for the first doc that had a valid title
-            ima_kb_doc_title = docs_to_try[0].get("title", "") if docs_to_try else ""
-            ima_kb_source_url = fallback_src_url
             if sahaja_link:
                 src_md, src_full = extract_date_from_url(sahaja_link)
                 article_md = date_str[5:] if date_str and len(date_str) >= 10 else "?"
                 print(f'[translate_article] ⚠ DATE MISMATCH (using fallback): IMA link date={src_md or "?"} vs article={article_md}')
                 print(f'[translate_article] IMA source link (fallback, UNVERIFIED): {sahaja_link[:80]}')
-            # 记录 fallback 原因供底部透明显示
-            ima_translation_fail_reason = (
-                f"IMA KB {phase_name}: 搜索到 {len(docs_to_try)} 个文档，"
-                f"全部日期不匹配文章日期 (文章={article_md}，"
-                f"匹配文档日期={src_md or '?'})，使用日期最接近文档"
-            )
+            
             pairs = fallback_parsed_pairs
             print(f'[translate_article] IMA KB OK (fallback, date NOT verified): {len(pairs)} pairs')
             return True
@@ -9398,27 +9359,13 @@ def search_ima_kb(query_text, phase_name, date_str=None):
                 src_md, src_full = extract_date_from_url(sahaja_link)
                 article_md = date_str[5:] if date_str and len(date_str) >= 10 else "?"
                 print(f'[translate_article] ⚠ DATE MISMATCH (zh-only fallback): IMA link date={src_md or "?"} vs article={article_md}')
-            ima_translation_fail_reason = (
-                f"IMA KB {phase_name}: 搜索到 {len(docs_to_try)} 个文档，"
-                f"日期不匹配 (文章={article_md}，"
-                f"匹配文档={src_md or '?'})，使用中文-only fallback"
-            )
             
             zh_sentences = [s.strip() for s in re.split(r'[。！？]', fallback_text) if len(s.strip()) >= 2]
             pairs = [["", s] for s in zh_sentences]
             print(f'[translate_article] IMA KB OK (zh-only fallback, date NOT verified): {len(pairs)} zh-sentences')
             return True
         
-        print(f'[translate_article] IMA KB {phase_name}: all {len(docs_to_try)} docs failed to produce valid content')
-        if ima_translation_fail_reason:
-            print(f'[translate_article] ⛔ IMA KB failure reason: {ima_translation_fail_reason}')
-        else:
-            # 没有限速但也找不到：记录通用失败原因用于邮件底部透明显示
-            ima_translation_fail_reason = (
-                f"IMA KB {phase_name}: 搜索到 {len(docs_to_try)} 个文档"
-                f"，全部无法产出有效中文"
-            )
-            print(f'[translate_article] ⛔ IMA KB failure: {ima_translation_fail_reason}')
+        print(f'[translate_article] IMA KB {phase_name}: all {len(ordered_docs)} docs failed to produce valid content')
         return False
 
 
@@ -9784,7 +9731,6 @@ else:
                   "sentences": [{"en": en, "zh": zh}]} for en, zh in pairs]
         
         print(f"[translate_article] Aliyun done: {len(pairs)} sentences, converted to structured format")
-        is_machine_translation = True
 
 
 
@@ -10481,37 +10427,7 @@ html += "<hr style=border:none;border-top:1px solid #eee;margin:24px 0 16px 0;>"
 
 
 
-# 翻译来源标注
-if ima_kb_doc_title:
-    # ✅ 来自 IMA KB 官方翻译
-    html += "<p style=color:#999;font-size:0.78em;margin:0 0 8px 0;padding:8px 10px;background:#fafafa;border-radius:6px;line-height:1.5;>"
-    html += "<strong>翻译来源：</strong>来源于 sahaja.live 官方翻译（IMA 知识库）<br>"
-    html += "文档标题：" + ima_kb_doc_title.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-    if ima_kb_source_url:
-        html += "<br>来源：<a href=\"" + ima_kb_source_url + "\" style=\"color:#999;\">" + ima_kb_source_url + "</a>"
-    html += "</p>"
-elif ima_translation_fail_reason:
-    # ❌ IMA KB 搜索失败，使用机器翻译
-    html += "<p style=color:#999;font-size:0.78em;margin:0 0 8px 0;padding:8px 10px;background:#fafafa;border-radius:6px;line-height:1.5;>"
-    html += "<strong>翻译来源说明：</strong><br>"
-    html += ima_translation_fail_reason.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    if is_machine_translation:
-        html += "<br>此中文为机器翻译，非霎哈嘉 Live 网站官方翻译。"
-    html += "</p>"
-elif pairs:
-    # 可能来自 sahaja.live WP API 或旧缓存（非 IMA KB 路径）— 这种情况如果没标注就不加说明
-    pass
-
-# 底部链接
-html += "<p style=color:#aaa;font-size:0.8em;margin:0;word-break:break-all;>"
-# 第一个链接：amruta.today（原始文章）
-first_link = link or ""
-html += "<a href=\"" + first_link + "\" style=color:#aaa;>" + first_link + "</a>"
-html += "<br><br>"
-# 第二个链接：sahaja.live（翻译来源）
-second_link = (ima_kb_source_url or sahaja_link) or "https://sahaja.live/"
-html += "<a href=\"" + second_link + "\" style=color:#aaa;>" + second_link + "</a>"
-html += "</p>"
+html += "<p style=color:#aaa;font-size:0.8em;margin:0;word-break:break-all;><a href=https://amruta.today/ style=color:#aaa;>https://amruta.today/</a><br><br><a href=" + link + " style=color:#aaa;>" + link + "</a></p>"
 
 
 
@@ -10638,14 +10554,6 @@ with open("/tmp/sahaja_link.txt", "w", encoding="utf-8") as f:
 
 
     f.write(link or "")
-
-# 写入 IMA KB 文档标题（供验收/审核用）
-with open("/tmp/ima_kb_doc_title.txt", "w", encoding="utf-8") as f:
-    f.write(ima_kb_doc_title)
-
-# 写入 IMA KB source URL（真实的 sahaja.live 链接，不是 amruta.today）
-with open("/tmp/ima_kb_source_url.txt", "w", encoding="utf-8") as f:
-    f.write(ima_kb_source_url or sahaja_link or "")
 
 
 

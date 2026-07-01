@@ -1,0 +1,329 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>每日 Shri Mataji 讲话 · 中英对照存档</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-font-smoothing:antialiased}
+body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;background:#f5f0eb;color:#2c2c2c;line-height:1.7;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse at 20% 10%,rgba(180,160,140,0.12) 0%,transparent 50%),radial-gradient(ellipse at 80% 90%,rgba(200,180,160,0.10) 0%,transparent 50%);pointer-events:none;z-index:-1}
+.container{max-width:720px;margin:0 auto;padding:0 24px}
+header{padding:64px 0 48px;text-align:center}
+header h1{font-size:clamp(28px,5vw,40px);font-weight:600;color:#1a1a1a;letter-spacing:.02em;margin-bottom:12px}
+header .subtitle{font-size:clamp(15px,2.5vw,18px);color:#888;font-weight:400}
+header .subtitle span{display:inline-block;padding:4px 14px;background:rgba(180,160,140,0.15);border-radius:20px;font-size:14px;color:#8a7a6a;margin-top:8px}
+.toolbar{display:flex;align-items:center;justify-content:space-between;padding:16px 0 24px;border-bottom:1px solid rgba(0,0,0,0.06);margin-bottom:32px}
+.toolbar .count{font-size:14px;color:#999}
+.toolbar .count strong{color:#666;font-weight:500}
+.toolbar .rss-link{font-size:14px;color:#8a7a6a;text-decoration:none;padding:4px 14px;border:1px solid rgba(140,125,110,0.25);border-radius:20px;transition:all .2s}
+.toolbar .rss-link:hover{background:rgba(140,125,110,0.08);border-color:rgba(140,125,110,0.4)}
+.article-list{display:flex;flex-direction:column;gap:12px;padding-bottom:64px}
+.article-card{display:flex;align-items:center;gap:20px;padding:18px 24px;background:rgba(255,255,255,0.65);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.8);border-radius:14px;text-decoration:none;color:inherit;transition:all .25s ease;position:relative}
+.article-card:hover{background:rgba(255,255,255,0.85);transform:translateY(-1px);box-shadow:0 4px 20px rgba(0,0,0,0.06)}
+.article-card:active{transform:translateY(0)}
+.article-card .date-badge{flex-shrink:0;text-align:center;min-width:56px}
+.article-card .date-badge .month{display:block;font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.08em;line-height:1}
+.article-card .date-badge .day{display:block;font-size:26px;font-weight:600;color:#4a4a4a;line-height:1.2;margin-top:2px}
+.article-card .date-badge .year{display:block;font-size:11px;color:#bbb;line-height:1}
+.article-card .card-content{flex:1;min-width:0}
+.article-card .card-content .card-title{font-size:17px;font-weight:500;color:#2c2c2c;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:keep-all;overflow-wrap:anywhere}
+.article-card .card-content .card-preview{font-size:14px;color:#aaa;margin-top:4px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+.article-card .arrow{flex-shrink:0;color:#ccc;font-size:18px;transition:all .2s}
+.article-card:hover .arrow{color:#8a7a6a;transform:translateX(3px)}
+.empty-state{text-align:center;padding:80px 24px;color:#bbb}
+.empty-state .empty-icon{font-size:40px;margin-bottom:16px;opacity:0.4}
+.empty-state p{font-size:16px;line-height:1.6}
+footer{text-align:center;padding:32px 0 48px;border-top:1px solid rgba(0,0,0,0.04)}
+footer a{color:#8a7a6a;text-decoration:none;font-size:14px;transition:color .2s}
+footer a:hover{color:#6a5a4a}
+@media(max-width:480px){header{padding:40px 0 32px}.article-card{padding:14px 16px;gap:14px}.article-card .date-badge{min-width:44px}.article-card .date-badge .day{font-size:22px}.article-card .card-content .card-title{font-size:15px}.toolbar{flex-direction:column;gap:12px;align-items:flex-start}}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+  <h1>每日 Shri Mataji 讲话</h1>
+  <p class="subtitle">中英对照 · 逐日存档</p>
+  <p class="subtitle"><span>Amruta Today Archive</span></p>
+</header>
+<div class="toolbar">
+  <span class="count">共 <strong>21</strong> 篇讲话</span>
+  <div style="display:flex;gap:10px;align-items:center">
+    <a href="wordbook.html" class="rss-link" id="idx-wb-link">📖 单词本 <span id="idx-wb-count"></span></a>
+    <a href="https://amruta.today/" class="rss-link" target="_blank">Amruta.today →</a>
+  </div>
+</div>
+<script>
+(function(){
+  try{
+    const wb=JSON.parse(localStorage.getItem('amruta_wordbook')||'{}');
+    const n=Object.keys(wb).length;
+    const el=document.getElementById('idx-wb-count');
+    if(el&&n>0)el.textContent='('+n+')';
+  }catch(e){}
+})();
+</script>
+<div class="article-list">
+  <a href="daily/1995-06-25.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">25</span>
+      <span class="year">1995</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Queen Victoria</div>
+      <div class="card-preview">1995-06-25 · 维多利亚女王</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-24.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">24</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">A loving temperament</div>
+      <div class="card-preview">2026-06-24 · 温柔的性格</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-23.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">23</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">The need for the Right Channel</div>
+      <div class="card-preview">2026-06-23 · 需要正确的渠道</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-22.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">22</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Horizontal layers versus vertical channels</div>
+      <div class="card-preview">2026-06-22 · 水平层与垂直通道</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-21.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">21</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">No need for fear or malice</div>
+      <div class="card-preview">2026-06-21 · 不需要恐惧或恶意</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-20.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">20</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Divine Love</div>
+      <div class="card-preview">2026-06-20 · 神圣的爱</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-19.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">19</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Strengthening our Kundalini</div>
+      <div class="card-preview">2026-06-19 · 加强我们的昆达里尼</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-18.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">18</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Expanding the awareness</div>
+      <div class="card-preview">2026-06-18 · 扩大意识</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-17.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">17</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Love and Knowledge of God's Divine Nature</div>
+      <div class="card-preview">2026-06-17 · 对上帝神圣本质的爱和知识</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-16.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">16</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Receiving the beauty that is promised</div>
+      <div class="card-preview">2026-06-16 · 接纳那被许诺的美</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-15.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">15</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Still in the dreamland of reflection</div>
+      <div class="card-preview">2026-06-15 · 犹在思虑的梦境中</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-14.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">14</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Tending to the Self</div>
+      <div class="card-preview">2026-06-14 · 关照真我</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-13.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">13</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Value through testing</div>
+      <div class="card-preview">2026-06-13 · 通过测试创造价值</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-12.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">12</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">The reason for rationality</div>
+      <div class="card-preview">2026-06-12 · 理性的理由</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-11.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">11</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Shouldering Sahaja Yoga</div>
+      <div class="card-preview">2026-06-11 · 肩负起霎哈嘉瑜伽</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-10.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">10</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">"Who is the other?"</div>
+      <div class="card-preview">2026-06-10 · 谁是他人？</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-09.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">9</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Curing with a purpose</div>
+      <div class="card-preview">2026-06-09 · 带着目的去治疗</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-08.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">8</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">A second stone age</div>
+      <div class="card-preview">2026-06-08 · 第二个石器时代</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-07.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">7</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Avoiding plastic</div>
+      <div class="card-preview">2026-06-07 · 避免塑料制品</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-06.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">6</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">Ego satisfied with own shadow</div>
+      <div class="card-preview">2026-06-06 · 自我满足于自身的阴影</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+  <a href="daily/2026-06-05.html" class="article-card">
+    <div class="date-badge">
+      <span class="month">Jun</span>
+      <span class="day">5</span>
+      <span class="year">2026</span>
+    </div>
+    <div class="card-content">
+      <div class="card-title">In the illusion of "doing"</div>
+      <div class="card-preview">2026-06-05 · 在「做」的幻象之中</div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+</div>
+<footer>
+  <a href="https://amruta.today/" target="_blank">Amruta.today</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/wherejiahe-bot/amruta-daily-archive" target="_blank">GitHub</a>
+</footer>
+</div>
+</body>
+</html>
