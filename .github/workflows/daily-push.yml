@@ -79,6 +79,7 @@ jobs:
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
           AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.AMRUTA_GITHUB_TOKEN }}
         run: |
           echo "Audit FAILED. Retrying translation..."
           python3 scripts/step2_translate.py

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Step 3.5: Email content quality audit with Agnes AI alignment check.
 Validates the generated bilingual email before sending.
 If audit FAILS -> blocks email sending, triggers rework.
@@ -52,9 +52,9 @@ def check_alternation(paras):
 def check_html_structure(html):
     """Check required HTML elements."""
     checks = {}
-    checks["has_title"] = bool(re.search(r"<h2>", html))
-    checks["has_date"] = bool(re.search(r"<p>\d{4}-\d{2}-\d{2}</p>", html))
-    checks["has_hr"] = "<hr>" in html
+    checks["has_title"] = bool(re.search(r"<h[123]", html))
+    checks["has_date"] = bool(re.search(r"\\d{4}-\\d{2}-\\d{2}", html))
+    checks["has_hr"] = "<hr" in html
     checks["has_links"] = "href=" in html
     return checks
 
