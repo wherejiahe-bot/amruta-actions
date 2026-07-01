@@ -52,7 +52,7 @@ jobs:
         run: |
           echo "## IMA KB Search Results"
           if [ -f /tmp/ima_kb_search_results.json ]; then
-            python3 -c 'import json; data=json.load(open("/tmp/ima_kb_search_results.json")); [print("  - %s [%s] %s" %% (d["title"],d["type"],d["picked"])) for d in data]'
+            python3 -c 'import json; d=json.load(open("/tmp/ima_kb_search_results.json")); [print("  - %s [%s] %s" % (x["title"],x["type"],x["picked"])) for x in d]'
           else
             echo "No IMA KB search results file found"
           fi
