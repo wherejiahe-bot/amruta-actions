@@ -40,16 +40,26 @@ def count_bilingual_pairs(html):
 
 
 def check_alternation(paras):
-    """Check EN/CN alternation pattern."""
+    """Check EN/CN block alternation pattern.
+    
+    HTML structure: multiple EN <p> tags per pair, then ONE CN <p> tag.
+    Pattern: EN, EN, ..., EN, CN, EN, EN, ..., EN, CN, ...
+    """
     issues = []
-    for i, p in enumerate(paras):
-        has_chinese = bool(re.search(r"[\u4e00-\u9fff]", p))
-        if i == 0 and has_chinese:
-            issues.append(f"第 {i+1} 段：首段应为英文，实际为中文")
-        elif i > 0:
-            prev_has = bool(re.search(r"[\u4e00-\u9fff]", paras[i - 1]))
-            if has_chinese == prev_has:
-                issues.append(f"第 {i+1} 段：相邻段落语言重复（预期交替）")
+    if not paras:
+        return issues
+    
+    # First paragraph must be English
+    if re.search(r"[\u4e00-\u9fff]", paras[0]):
+        issues.append("首段应为英文，实际为中文")
+    
+    # Check that CN paragraphs don't appear consecutively
+    for i in range(1, len(paras)):
+        has_chinese = bool(re.search(r"[\u4e00-\u9fff]", paras[i]))
+        prev_has = bool(re.search(r"[\u4e00-\u9fff]", paras[i - 1]))
+        if has_chinese and prev_has:
+            issues.append(f"第 {i+1} 段：连续两个中文段落（预期每个中文段落后跟英文段）")
+    
     return issues
 
 
@@ -270,13 +280,22 @@ def run_audit():
         results["英中交替"] = ("[OK]", f"交替排列正确（英文 {en_count} 段，中文 {cn_count} 段）")
 
     # === 3. 段落数匹配 ===
-    diff = abs(en_count - cn_count)
-    if diff > 2:
-        results["段落数匹配"] = ("[FAIL]", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 {diff}")
-        failures.append(f"段落差 {diff} (>2)")
-    elif diff == 2:
-        results["段落数匹配"] = ("[WARN]", f"英文 {en_count} 段 vs 中文 {cn_count} 段，差 2 段")
-        warnings.append(f"段落差 2")
+    # In the HTML structure, each bilingual pair has multiple EN <p> tags + 1 CN <p> tag
+    # So en_count > cn_count is expected. Check that every CN paragraph has a preceding EN block.
+    if cn_count == 0 and en_count > 0:
+        results["段落数匹配"] = ("[FAIL]", f"有英文 {en_count} 段但无中文段落")
+        failures.append("段落匹配：有英文无中文")
+    elif en_count == 0 and cn_count == 0:
+        results["段落数匹配"] = ("[FAIL]", "无段落内容")
+        failures.append("段落匹配：空内容")
+    elif cn_count > 0:
+        # Each CN paragraph should correspond to at least one EN paragraph
+        ratio = en_count / cn_count
+        if ratio >= 1:
+            results["段落数匹配"] = ("[OK]", f"英文 {en_count} 段，中文 {cn_count} 段（比例 {ratio:.1f}:1，符合多句对单段结构）")
+        else:
+            results["段落数匹配"] = ("[WARN]", f"英文 {en_count} 段 vs 中文 {cn_count} 段，比例异常 ({ratio:.1f}:1)")
+            warnings.append(f"段落比例异常 {ratio:.1f}:1")
     else:
         results["段落数匹配"] = ("[OK]", f"英文 {en_count} 段，中文 {cn_count} 段，匹配")
     # === 4. 中文非空检查（P0 阻塞） ===
