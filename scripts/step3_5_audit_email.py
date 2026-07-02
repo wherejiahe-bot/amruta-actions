@@ -53,13 +53,15 @@ def check_alternation(paras):
     if re.search(r"[\u4e00-\u9fff]", paras[0]):
         issues.append("首段应为英文，实际为中文")
     
-    # Check that CN paragraphs don't appear consecutively
+    # Check that CN paragraphs don't appear consecutively (except last paragraph)
     for i in range(1, len(paras)):
         has_chinese = bool(re.search(r"[\u4e00-\u9fff]", paras[i]))
         prev_has = bool(re.search(r"[\u4e00-\u9fff]", paras[i - 1]))
         if has_chinese and prev_has:
+            # Last paragraph being CN is OK (document ends with translation)
+            if i == len(paras) - 1:
+                continue
             issues.append(f"第 {i+1} 段：连续两个中文段落（预期每个中文段落后跟英文段）")
-    
     return issues
 
 
