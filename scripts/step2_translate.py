@@ -9410,6 +9410,7 @@ if not pairs:
     # Try extracting correct date from source URL (e.g., "1979/06/15" from amruta.org or sahaja.live)
     import re as _re2
     correct_date = None
+    phase1_retry_ok = False
     if link:
         _m = _re2.search(r'/?(\d{4})[-/](\d{2})[-/]?(-?\d{2})', link)
         if _m:
@@ -10067,6 +10068,8 @@ except: dd = date_str
 
 
 link = sahaja_link or link
+amruta_link = link.replace("www.amruta.org", "amruta.today").replace("sahaja.live", "amruta.today") if link else ""  # 同步更新：link 已被 sahaja_link 覆盖，amruta_link 也要跟着变
+
 
 
 
@@ -10347,9 +10350,9 @@ elif pairs:
 
 # 底部链接
 html += "<p style=color:#aaa;font-size:0.8em;margin:0;word-break:break-all;>"
-# 第一个链接：amruta.today（原始文章）
-first_link = amruta_link or ""
-html += "<a href=\"" + first_link + "\" style=color:#aaa;>" + first_link + "</a>"
+# 第一个链接：amruta.today（固定首页链接，不加日期路径）
+first_link = "https://amruta.today"
+html += "<a href=\"" + first_link + "\" style=color:#aaa; target=_blank rel=noopener>amruta.today（原始文章来源）</a>"
 html += "<br><br>"
 # 第二个链接：sahaja.live（翻译来源）
 second_link = (ima_kb_source_url or sahaja_link) or "https://sahaja.live/"
