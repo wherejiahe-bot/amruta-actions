@@ -891,8 +891,12 @@ def extract_title_cn_from_pairs(pairs_list, en_title):
 
 
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
+    article = json.load(f)
 
-
+date_str = article["date"]
+title_en = article["title"]
+content  = article["content"]
+link     = article.get("link", "")
 
 
 
@@ -8810,10 +8814,16 @@ def llm_sentence_align(en_sents, zh_paragraphs):
 
 **Rules:**
 1. For each English sentence, find the best matching Chinese text (it could be 1:1, 1:N (one English -> multiple Chinese), or N:1 (multiple English -> one Chinese)).
-2. Preserve the official Chinese text EXACTLY - do not rephrase or summarize.
-3. If a Chinese paragraph covers multiple English sentences, assign the SAME Chinese text to each English sentence (mark them as merged).
-4. If an English sentence has no matching Chinese, use "" for the Chinese field.
-5. If an English sentence could match only a portion of a Chinese paragraph, split the paragraph at commas or sentence boundaries and assign the relevant portion.
+2. **CRITICAL RULE — Sentence-Level Alignment Only**: The relationship between English and Chinese MUST be one of exactly three types:
+   - **1:1** — One English sentence ↔ One Chinese sentence
+   - **N:1** — Multiple English sentences → One Chinese sentence
+   - **1:N** — One English sentence → Multiple Chinese sentences
+   - **FORBIDDEN**: Many-to-many vague mapping (a big chunk of English mixed with a big chunk of Chinese without clear boundaries)
+3. Preserve the official Chinese text EXACTLY - do not rephrase or summarize.
+4. If a Chinese paragraph covers multiple English sentences, assign the SAME Chinese text to each English sentence (mark them as merged).
+5. If an English sentence has no matching Chinese, use "" for the Chinese field.
+6. If an English sentence could match only a portion of a Chinese paragraph, split the paragraph at commas or sentence boundaries and assign the relevant portion.
+7. **Format requirement**: Each English sentence must have a clearly paired Chinese sentence. Do not group multiple English sentences together and then list multiple Chinese sentences separately.
 
 **Input:**
 
@@ -9109,8 +9119,7 @@ def search_ima_kb(query_text, phase_name, date_str=None):
                     print(f'[translate_article]   doc#{doc_idx} get_media_info ERROR: code={media_code}, msg={media_msg}')
                     if media_code == 220021:
                         print(f'[translate_article]   ⛔ IMA KB rate limited (daily quota exhausted), stopping doc iteration')
-                        global ima_translation_fail_reason
-                        ima_translation_fail_reason = f"IMA KB {phase_name}: get_media_info 返回 code={media_code}（{media_msg}）"
+                        globals()['ima_translation_fail_reason'] = f"IMA KB {phase_name}: get_media_info 返回 code={media_code}（{media_msg}）"
                         break
                     continue
                 media_data = raw_resp.get("data", {})
@@ -9625,6 +9634,8 @@ else:
         
         print(f"[translate_article] Aliyun done: {len(pairs)} sentences, converted to structured format")
         is_machine_translation = True
+        # Append Aliyun info to fail reason for transparency
+        globals()['ima_translation_fail_reason'] = globals()['ima_translation_fail_reason'] + ("; " if globals()['ima_translation_fail_reason'] else "") + "已使用阿里云机器翻译降级"
 
 
 
@@ -9957,14 +9968,19 @@ def rebuild_pair_html(pairs_list):
             continue
         zh_para = (item.get("zh_para") or "").strip()
         en_list = [s.get("en", "") for s in sentences]
-        has_zh = any((s.get("zh") or "").strip() for s in sentences)
-        if not has_zh:
-            for en_item in en_list:
-                lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">' + en_item + '</p>')
-        else:
+        has_zh_sent = any((s.get("zh") or "").strip() for s in sentences)
+        if has_zh_sent:
             for en_item in en_list:
                 lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en_item + '</p>')
             lines_out.append('<p style="margin:0 0 14px 0;">' + zh_para + '</p>')
+        elif zh_para:
+            # zh_para has content even if sentence-level zh is empty (e.g., Aliyun fallback)
+            for en_item in en_list:
+                lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en_item + '</p>')
+            lines_out.append('<p style="margin:0 0 14px 0;">' + zh_para + '</p>')
+        else:
+            for en_item in en_list:
+                lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">' + en_item + '</p>')
     return chr(10).join(lines_out)
 
 
@@ -10104,12 +10120,30 @@ DEDUP_THRESHOLD = 0.85  # 余弦相似度阈值，>0.85 视为重复
 DEDUP_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"  # 轻量级，384维
 
 # 加载模型（缓存已存在，首次下载后不再下载）
+# 超时控制：HuggingFace 可能被墙，15秒内连不上就直接跳过
 print(f"[dedup] Loading model: {DEDUP_MODEL_NAME}...")
-try:
-    _dedup_model = STModel(DEDUP_MODEL_NAME, device="cpu")  # 用CPU避免GPU依赖
-    print(f"[dedup] Model loaded.")
-except Exception as e:
-    print(f"[dedup] Model load failed ({e}), skipping semantic dedup.")
+_DEDUP_MODEL_CACHE = os.environ.get("SENTENCE_TRANSFORMERS_CACHE", "")
+if _DEDUP_MODEL_CACHE:
+    os.environ["TRANSFORMERS_CACHE"] = _DEDUP_MODEL_CACHE
+    os.environ["HF_HOME"] = _DEDUP_MODEL_CACHE
+
+import threading
+_dedup_model = None
+def _load_model():
+    global _dedup_model
+    try:
+        _dedup_model = STModel(DEDUP_MODEL_NAME, device="cpu", trust_remote_code=True,
+                               local_files_only=False, cache_folder=None)
+        print(f"[dedup] Model loaded.")
+    except Exception as e:
+        print(f"[dedup] Model load failed ({e}), skipping semantic dedup.")
+        _dedup_model = None
+
+_loader_thread = threading.Thread(target=_load_model, daemon=True)
+_loader_thread.start()
+_loader_thread.join(timeout=15)
+if _loader_thread.is_alive():
+    print("[dedup] Model loading timed out (15s), HuggingFace unreachable, skipping semantic dedup.")
     _dedup_model = None
 
 
@@ -10350,11 +10384,11 @@ elif pairs:
 
 # 底部链接
 html += "<p style=color:#aaa;font-size:0.8em;margin:0;word-break:break-all;>"
-# 第一个链接：amruta.today（固定首页链接，不加日期路径）
-first_link = "https://amruta.today"
-html += "<a href=\"" + first_link + "\" style=color:#aaa; target=_blank rel=noopener>amruta.today（原始文章来源）</a>"
-html += "<br><br>"
-# 第二个链接：sahaja.live（翻译来源）
+# 第一个链接：amruta.today（固定不变，永远就是这个 URL）
+first_link = "https://amruta.today/"
+html += "<a href=\"" + first_link + "\" style=color:#aaa; target=_blank rel=noopener>" + first_link + "</a>"
+html += "<br>"
+# 第二个链接：sahaja.live（从中文文档 source 字段提取）
 second_link = (ima_kb_source_url or sahaja_link) or "https://sahaja.live/"
 html += "<a href=\"" + second_link + "\" style=color:#aaa;>" + second_link + "</a>"
 html += "</p>"

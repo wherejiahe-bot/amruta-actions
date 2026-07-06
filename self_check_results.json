@@ -1,0 +1,51 @@
+[
+  {
+    "idx": 1,
+    "status": "fix",
+    "corrected_en": "Your priority should be sahaja yoga, sahaja yoga, sahaja yoga.",
+    "corrected_zh": "你的首要任务应该是霎哈嘉瑜伽，霎哈嘉瑜伽，霎哈嘉瑜伽。",
+    "reason": "翻译不准确。'Priority'在此语境下意为‘首要任务’或‘优先事项’，而非‘优先级’；且原文是重复强调，中文译文将第三次重复误译为‘还是’，应保持一致。"
+  },
+  {
+    "idx": 3,
+    "status": "fix",
+    "corrected_en": "She should show that her interest is sahaja yoga nothing else and he will come.",
+    "corrected_zh": "她应该表明她的兴趣只在霎哈嘉瑜伽，别无其他，他就会加入（或：他就会来）。",
+    "reason": "翻译不自然。'Nothing else'译为‘没有其它’略显生硬，建议改为‘别无其他’；'come'在宗教/灵性语境中通常指‘加入’或‘到来’，译为‘进来’不符合中文习惯。"
+  },
+  {
+    "idx": 7,
+    "status": "fix",
+    "corrected_en": "If she tries that, husband need not listen to her at all he should go full ahead.",
+    "corrected_zh": "如果她试图那样做，丈夫根本不必理会她，而应勇往直前。",
+    "reason": "翻译不准确。'Go full ahead'意为‘勇往直前’或‘全力前进’，译为‘全力以赴’虽接近但‘勇往直前’更贴合语境中的坚定态度；'listen to her'译为‘理会她’比‘听她的’更符合此处‘不予理睬’的语境。"
+  },
+  {
+    "idx": 13,
+    "status": "fix",
+    "corrected_en": "So any excuses, that takes you away from sahaja yoga are not helpful to the family.",
+    "corrected_zh": "因此，任何将你带离霎哈嘉瑜伽的借口，都对家庭没有帮助。",
+    "reason": "语序和逻辑不清。原译文重复了‘借口’，且定语从句处理不当，导致句子结构松散。应简化为‘任何将你带离...的借口’。"
+  },
+  {
+    "idx": 17,
+    "status": "fix",
+    "corrected_en": "So, you are doing a greater, you are doing a greater service to your family by becoming a sahaja yogi and a true sahaja yogi and a dedicated and devoted [sahaja yogi].",
+    "corrected_zh": "所以，你正在做一件更伟大的事，你正在为你的家庭做出更大的贡献，通过成为一名霎哈嘉瑜伽士，一名真正的霎哈嘉瑜伽士，以及一位虔诚奉献的[霎哈嘉瑜伽士]。",
+    "reason": "翻译不完整/错误。原文末尾 'devot' 显然是 'devoted' 的截断词，且句子结构重复强调 'greater service'。中文译文未体现 'service' 到 '贡献' 的准确对应，且原文截断处需补全或注明。鉴于输入文本截断，修正译文应反映原文的重复修辞并补全语义。"
+  },
+  {
+    "idx": 18,
+    "status": "fix",
+    "corrected_en": "But no individualistic efforts, no individualistic attitude is helpful to Me or to sahaja yoga, is very detrimental under any name under any banner un[der any pretext].",
+    "corrected_zh": "但是，任何个人主义的努力或个人主义的态度，对我或霎哈嘉瑜伽都无益，以任何名义、任何旗帜、任何借口[行事]都是非常有害的。",
+    "reason": "翻译不准确/原文截断。原文 'un' 应为 'under' 的截断。中文译文添加了‘任何借口’，但原文结构是 'under any name under any banner'，通常接 'under any pretext'。译文需反映这种排比结构，并指出原文截断导致的语义缺失。"
+  },
+  {
+    "idx": 20,
+    "status": "fix",
+    "corrected_en": "If you want to find out faults with others there can be any, I mean I should not be here.",
+    "corrected_zh": "如果你想找别人的茬，那可以有无数种理由，我的意思是我不应该在这里。",
+    "reason": "翻译错误。'there can be any' 在此语境下意为‘可以找到任何借口/理由’，而非‘可以是任何错误’。后半句 'I mean I should not be here' 是说话者（Jaggi Vasudev）的反讽或自我指涉，直译‘我意思是我不应该在这里’虽字面对应，但结合上下文，通常指‘如果我要挑错，那我就不该存在于此’。原译文‘可以是任何错误’严重误译了 'faults' 和 'any' 的关系。"
+  }
+]

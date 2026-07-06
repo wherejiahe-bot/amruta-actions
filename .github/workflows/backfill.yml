@@ -1,0 +1,53 @@
+﻿name: Backfill Amruta Push
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: 'Start date (YYYY-MM-DD). Default: 2026-06-12'
+        required: false
+        default: '2026-06-12'
+      date_to:
+        description: 'End date (YYYY-MM-DD). Default: today'
+        required: false
+        default: ''
+
+jobs:
+  process-single:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      max-parallel: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      
+      - name: Process date
+        env:
+          DATE_OVERRIDE: ${{ matrix.date }}
+          IMA_CLIENT_ID: ${{ secrets.IMA_CLIENT_ID }}
+          IMA_API_KEY: ${{ secrets.IMA_API_KEY }}
+          IMA_KB_ID: ${{ secrets.IMA_KB_ID }}
+          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.AMRUTA_GITHUB_TOKEN }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+        run: |
+          FROM="${{ github.event.inputs.date_from || '2026-06-12' }}"
+          TO="${{ github.event.inputs.date_to || '' }}"
+          [ -z "$TO" ] && TO=$(date -u -d '+8 hours' '+%Y-%m-%d')
+          CURRENT="$FROM"
+          while [ "$CURRENT" != "$TO" ] && [ "$CURRENT" \< "$TO" ] || [ "$CURRENT" = "$TO" ]; do
+            echo "=== Processing $CURRENT ==="
+            export DATE_OVERRIDE=$CURRENT
+            pip install numpy dateparser -q
+            python3 scripts/step1_fetch.py
+            python3 scripts/step2_translate.py
+            python3 scripts/step3_push.py
+            python3 scripts/step3_5_audit_email.py || true
+            python3 scripts/step4_email.py
+            CURRENT=$(date -d "$CURRENT + 1 day" '+%Y-%m-%d')
+          done

@@ -236,7 +236,7 @@ if smtp_user and smtp_pass:
 
 <hr style="border:none;border-top:1px solid #eee;margin:24px 0 16px 0;">
 <p style="color:#aaa;font-size:0.8em;margin:0;word-break:break-all;">
-  <a href="{link}" style="color:#aaa;">{link}</a>
+  <a href="https://amruta.today/" style="color:#aaa;" target="_blank" rel="noopener">https://amruta.today/</a>
   <br>
   <a href="{sahaja_link or 'https://sahaja.live/'}" style="color:#aaa;">{sahaja_link or 'https://sahaja.live/'}</a>
 </p>

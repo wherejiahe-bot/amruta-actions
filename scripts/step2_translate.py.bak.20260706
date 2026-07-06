@@ -1,0 +1,2015 @@
+﻿"""
+
+Step 2: Login to sahaja.live, search for Chinese translation.
+
+DIRECTLY adapted from the original Amruta Daily Push Coordinator.py (2nd run()).
+
+Changes from original:
+
+  - /workspace/ -> /tmp/
+
+  - hardcoded credentials -> os.environ.get()
+
+  - return -> file writes
+
+Reads /tmp/article_raw.json, outputs /tmp/pairs.json, /tmp/email_body.html, /tmp/sahaja_link.txt
+
+"""
+
+import json, re, os, urllib.request, urllib.parse, hashlib, hmac, base64, time, uuid
+
+import warnings
+
+warnings.filterwarnings("ignore")
+
+from datetime import datetime
+
+# 阿里云翻译函数（仅标题翻译用)
+
+def aliyun_translate_title(text):
+    """调用阿里云翻译标题，返回中文翻译。失败返回空字符串"""
+    ak_id = os.environ.get("ALIYUN_ACCESS_KEY_ID", "")
+    ak_secret = os.environ.get("ALIYUN_ACCESS_KEY_SECRET", "")
+    if not ak_id or not ak_secret:
+        return ""
+
+    import time, uuid, hashlib, hmac, base64 as b64, urllib.parse, urllib.request, ssl
+
+    def _sign(params, secret):
+        sorted_keys = sorted(params.keys())
+        canonicalized = '&'.join(f'{urllib.parse.quote(k, safe="")}={urllib.parse.quote(params[k], safe="")}' for k in sorted_keys)
+        string_to_sign = 'POST&%2F&' + urllib.parse.quote(canonicalized, safe='')
+        signature = b64.b64encode(hmac.new((secret + '&').encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha1).digest()).decode('utf-8')
+        return signature
+
+    params = {
+        'Action': 'TranslateGeneral',
+        'Version': '2018-10-12',
+        'RegionId': 'cn-hangzhou',
+        'FormatType': 'text',
+        'SourceLanguage': 'en',
+        'TargetLanguage': 'zh',
+        'SourceText': text,
+        'AccessKeyId': ak_id,
+        'Timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'SignatureMethod': 'HMAC-SHA1',
+        'SignatureVersion': '1.0',
+        'SignatureNonce': str(uuid.uuid4()),
+        'Format': 'JSON',
+    }
+    params['Signature'] = _sign(params, ak_secret)
+
+    try:
+        body = urllib.parse.urlencode(params).encode('utf-8')
+        req = urllib.request.Request('https://mt.cn-hangzhou.aliyuncs.com/', data=body, method='POST',
+            headers={'Content-Type': 'application/x-www-form-urlencoded'})
+        ctx = ssl.create_default_context()
+        resp = urllib.request.urlopen(req, context=ctx, timeout=15)
+        result = json.loads(resp.read().decode('utf-8'))
+        if result.get('Code') == '200':
+            translated = result.get('Data', {}).get('Translated', '')
+            if translated and translated.strip():
+                return translated.strip()
+    except Exception as e:
+        print(f'[aliyun_translate_title] ERROR: {e}')
+
+    return ""
+
+def polish_title(zh):
+    """润色中文标题，当前为直通（可加后处理规则）"""
+    return zh
+
+    zh = zh.replace('承担起', '肩负起').replace('承担', '肩负')
+
+    zh = re.sub(r'(来起作用的|起作用的|来发挥作用的)$', '', zh).strip()
+
+    zh = re.sub(r'^(通过你们|通过我们|通过|在于|由于|因为|当你们|当我们)', '', zh).strip()
+
+    return zh
+
+def extract_title_cn_from_pairs(pairs_list, en_title):
+
+    keywords = [w.strip('.,!?"\'-()').lower() for w in en_title.split() if len(w.strip('.,!?"\'-()')) > 2]
+
+    if not keywords:
+
+        return None
+
+    for item in pairs_list:
+        if not isinstance(item, dict):
+            continue
+        zh_para = (item.get("zh_para") or "").strip()
+        if not zh_para:
+            continue
+        for s in item.get("sentences", []):
+            en_str = (s.get("en") or "").strip()
+            if not en_str:
+                continue
+            en_lower = en_str.lower()
+            if all(kw in en_lower for kw in keywords):
+                en_sents = re.split(r'[.,]', en_str)
+                zh_sents = re.split(r'[，。]', zh_para)
+                for i, es in enumerate(en_sents):
+                    es_lower = es.lower()
+                    if all(kw in es_lower for kw in keywords):
+                        ratio = i / max(len(en_sents) - 1, 1)
+                        zh_idx = round(ratio * (len(zh_sents) - 1))
+                        zh_part = zh_sents[zh_idx].strip() if zh_idx < len(zh_sents) else ""
+                        if len(zh_part) > 4:
+                            return polish_title(zh_part)
+                for part in re.split(r'[，。；]', zh_para):
+                    part = part.strip()
+                    if 4 < len(part) <= 20:
+                        return polish_title(part)
+    return None
+
+with open("/tmp/article_raw.json", encoding="utf-8") as f:
+    article = json.load(f)
+
+date_str = article["date"]
+title_en = article["title"]
+content  = article["content"]
+link     = article.get("link", "")
+
+date_str = article["date"]
+
+title_en = article["title"]
+
+content  = article["content"]
+
+link     = article.get("link", "")
+amruta_link = link.replace("www.amruta.org", "amruta.today") if link else ""  # amruta.today 为永久链接，amruta.org 为旧短暂链接
+
+sahaja_link = None
+ima_translation_fail_reason = ""
+is_machine_translation = False
+ima_kb_doc_title = ""  # 被选为翻译来源的 IMA KB 文档标题（主人验证用，因为 sahaja.live 被墙打不开）
+ima_kb_source_url = ""  # IMA KB 文档的 source URL（sahaja.live 链接）
+
+pairs = []
+
+title_cn = title_en  # 先设 fallback，找到 pairs 后再更新
+
+def parse_sahaja_full_text(full_text):
+
+    """解析 sahaja.live 中英交替段落，返回 [(en, zh), ...] pairs"""
+
+    def is_zh_block(text):
+
+        cn = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+
+        return cn >= 3
+
+    blocks = [b.strip() for b in re.split(r'\n{2,}', full_text) if b.strip()]
+
+    def is_meta_block(b):
+
+        """判断是否为头部元信息行（日期、地点、语言说明、译注等)"""
+
+        if is_zh_block(b):
+
+            return True
+
+        if re.match(r'^\d{1,2}\s+\w+\s+\d{4}', b):  # "11 June 1989"
+
+            return True
+
+        if re.search(r'\d{4}年', b):  # 含中文年份
+
+            return True
+
+        if any(kw in b for kw in ['Talk Language', 'Transcript', 'VERIFIED', 'NEEDED',
+
+                                   '以下翻译', '供大家参考', 'subtitles', 'Subtitles']):
+
+            return True
+
+        # 纯地名行：含括号国家名，无动词
+
+        if (re.search(r'\((?:United States|USA|UK|India|France|Italy|Australia|Germany|Spain)\)', b)
+
+                and not re.search(r'\b(is|are|was|were|have|has|will|can|should|must|know|think|feel|decide|come|go)\b', b, re.I)):
+
+            return True
+
+        # 元信息重复行：含年份数字 + 地名关键词且无动词
+
+        if (re.search(r'\b(19|20)\d{2}\b', b)
+
+                and re.search(r'\b(USA|UK|India|France|Italy|Australia|Camp|Puja)\b', b)
+
+                and not re.search(r'\b(is|are|was|were|have|has|will|can|should|must|know|think|feel|decide)\b', b, re.I)):
+
+            return True
+
+        return False
+
+    result = []
+
+    i = 0
+
+    # 跳过头部元信息，找到正文起点（第一个非元信息的英文段)
+
+    while i < len(blocks):
+
+        b = blocks[i]
+
+        if not is_meta_block(b) and len(b) > 40 and re.search(r'[A-Z][a-z]', b):
+
+            break
+
+        i += 1
+
+    while i < len(blocks):
+
+        en_block = blocks[i]
+
+        if is_zh_block(en_block):
+
+            i += 1
+
+            continue
+
+        if i + 1 < len(blocks) and is_zh_block(blocks[i + 1]):
+
+            zh_block = blocks[i + 1]
+
+            result.append([en_block, zh_block])
+
+            i += 2
+
+        else:
+
+            result.append([en_block, ""])
+
+            i += 1
+
+    return result
+
+def parse_merged_text(full_text):
+
+    """解析 EN/ZH 合并在同一段落的格式（1978年早期讲话)。"""
+
+    blocks = [b.strip() for b in re.split(r'\n{2,}', full_text) if b.strip()]
+
+    result = []
+
+    start = 0
+
+    for i, b in enumerate(blocks):
+
+        cn = sum(1 for c in b if '\u4e00' <= c <= '\u9fff')
+
+        if cn == 0 and len(b) > 40 and re.search(r'[A-Z][a-z]', b):
+
+            start = i
+
+            break
+
+    for block in blocks[start:]:
+
+        cn = sum(1 for c in block if '\u4e00' <= c <= '\u9fff')
+
+        if cn == 0:
+
+            result.append([block, ''])
+
+            continue
+
+        m = re.split(r'(?<=[.!?])\s*(?=[\u4e00-\u9fff])', block, maxsplit=1)
+
+        if len(m) >= 2:
+
+            en_part, zh_part = m[0].strip(), m[1].strip()
+
+            if en_part and zh_part:
+
+                result.append([en_part, zh_part])
+
+                continue
+
+        for i, c in enumerate(block):
+
+            if '\u4e00' <= c <= '\u9fff':
+
+                result.append([block[:i].strip(), block[i:].strip()])
+
+                break
+
+    return result
+
+def has_chinese(pairs_list):
+
+    if pairs_list and isinstance(pairs_list[0], dict):
+        return any((item.get("zh_para") or "").strip() for item in pairs_list)
+    return any(zh.strip() for _, zh in pairs_list)
+
+# ================================================================== #
+
+# 句级对齐：用 amruta 英文句在 sahaja pairs 段落中匹配中文句
+
+# ================================================================== #
+
+def split_sentences(text):
+
+    """按句号/问号/感叹号+空格+大写字母拆分英文句"""
+
+    sents = re.split(r'(?<=[.!?])\s+(?=[A-Z"\'(])', text.strip())
+
+    return [s.strip() for s in sents if len(s.strip()) > 10]
+
+def sentence_similarity(s1, s2):
+
+    """计算两个英文句的词重叠率"""
+
+    w1 = set(re.findall(r'\b\w{4,}\b', s1.lower()))
+
+    w2 = set(re.findall(r'\b\w{4,}\b', s2.lower()))
+
+    if not w1 or not w2:
+
+        return 0
+
+    return len(w1 & w2) / min(len(w1), len(w2))
+
+# 英文关键词 → 中文对应词典（用于在中文句里定位)
+
+EN_ZH_DICT = {
+
+    'advertisement': '广告', 'photographs': '照片', 'photograph': '照片',
+
+    'responsibility': '责任', 'shouldering': '承担', 'spread': '传播',
+
+    'establish': '体系', 'shoulders': '肩膀', 'strong': '坚强',
+
+    'hanging': '飘荡', 'aeroplane': '飞机', 'freedom': '自由',
+
+    'liberation': '解脱', 'binding': '束缚', 'attached': '依恋',
+
+    'grow': '成长', 'personality': '个性', 'impressed': '打动',
+
+    'vicious': '恶性', 'circle': '循环', 'build': '建设',
+
+    'deep': '深入', 'dynamic': '活力', 'great': '伟大',
+
+    'transitory': '短暂', 'eternal': '永恒', 'detached': '解脱',
+
+    'subtler': '微妙', 'light': '光明', 'purpose': '目的',
+
+    'watch': '观察', 'subtle': '微妙', 'tagging': '拖累',
+
+    'dwarfy': '渺小', 'limited': '有限',
+
+    'carry': '承担', 'carrying': '承担',
+
+    'fuel': '油', 'fly': '飞', 'flying': '飞',
+
+    'inside': '内心', 'outside': '外在',
+
+    'hand': '辅相成', 'amazed': '惊讶',
+
+    'involved': '陷入', 'seeking': '寻求',
+
+    'free': '自由', 'using': '利用',
+
+    'grow': '成长', 'growing': '成长', 'growth': '成长',
+
+    'rationality': '理性', 'rational': '理性',
+
+    'reason': '理由', 'wisdom': '智慧',
+
+    'emotional': '情感', 'emotion': '情感', 'emotionality': '情感',
+
+    'balance': '平衡', 'centre': '中心', 'central': '中心',
+
+    'heart': '心', 'mind': '脑',
+
+    'understand': '理解', 'understanding': '理解',
+
+    'knowledge': '知识', 'experience': '体验', 'experiencing': '体验',
+
+    'reality': '实相', 'truth': '真理',
+
+    'progress': '进步', 'limitation': '局限', 'limited': '有限',
+
+    'beyond': '超越', 'transcend': '超越',
+
+    'consciousness': '意识', 'awareness': '觉知',
+
+    'joy': '喜乐', 'bliss': '极乐',
+
+    'sahaja': '霎哈嘉', 'yoga': '瑜伽',
+
+    'meditation': '冥想', 'thoughtless': '无思虑',
+
+    'vibration': '生命能量', 'vibrations': '生命能量',
+
+    'chakra': '轮穴', 'kundalini': '灵量',
+
+    'realisation': '自觉', 'self-realisation': '自觉',
+
+    'enlighten': '开悟', 'awaken': '觉醒',
+
+}
+
+def en_sent_to_zh_keywords(en_sent):
+
+    """把英文句的关键词翻成中文，用于在中文句里匹配"""
+
+    words = re.findall(r'\b[a-z]{4,}\b', en_sent.lower())
+
+    zh_kws = []
+
+    for w in words:
+
+        if w in EN_ZH_DICT:
+
+            zh_kws.append(EN_ZH_DICT[w])
+
+    return zh_kws
+
+def find_zh_for_en_sent(en_sent, sahaja_pairs, used_zh=None):
+
+    """
+
+    对每句 amruta 英文：
+
+    1. 在 sahaja 段级 pairs 英文里找最匹配的段落
+
+    2. 把英文句关键词翻成中文，在中文段的子句里找命中最多的那句
+
+    """
+
+    stopwords = {'that','this','with','have','your','from','they','them',
+
+                 'will','what','when','into','been','were','also','just',
+
+                 'more','than','then','there','their','which','still','only',
+
+                 'such','very','even','does','dont','cant','wont','should'}
+
+    en_keywords = set(re.findall(r'\b[a-z]{4,}\b', en_sent.lower())) - stopwords
+
+    if not en_keywords:
+
+        return ""
+
+    # Step 1: 找最匹配的 sahaja 段落（英文段关键词重叠最多)
+
+    best_score = 0
+
+    best_zh_para = ""
+
+    best_en_para = ""
+
+    for en_para, zh_para in sahaja_pairs:
+
+        if not zh_para.strip():
+
+            continue
+
+        para_words = set(re.findall(r'\b[a-z]{4,}\b', en_para.lower())) - stopwords
+
+        score = len(en_keywords & para_words) / max(len(en_keywords), 1)
+
+        if score > best_score:
+
+            best_score = score
+
+            best_zh_para = zh_para
+
+            best_en_para = en_para
+
+    if best_score < 0.2 or not best_zh_para:
+
+        return ""
+
+    # Step 2: 把英文句关键词翻成中文
+
+    zh_kws = en_sent_to_zh_keywords(en_sent)
+
+    # Step 3: 中文段按句拆分，找命中中文关键词最多的子句
+
+    zh_sents = [s.strip() for s in re.split(r'[。！？]', best_zh_para) if len(s.strip()) > 3]
+
+    if not zh_sents:
+
+        return best_zh_para
+
+    if zh_kws:
+
+        best_zh_score = -1
+
+        best_zh_sent = zh_sents[0]
+
+        for zs in zh_sents:
+
+            if used_zh and zs in used_zh:
+
+                continue  # 跳过已用过的句子
+
+            sc = sum(1 for kw in zh_kws if kw in zs)
+
+            if sc > best_zh_score:
+
+                best_zh_score = sc
+
+                best_zh_sent = zs
+
+        return best_zh_sent
+
+    # 没有中文关键词时，按位置比例映射
+
+    en_sents_in_para = split_sentences(best_en_para)
+
+    sent_idx = 0
+
+    best_sub = 0
+
+    for idx, es in enumerate(en_sents_in_para):
+
+        es_words = set(re.findall(r'\b[a-z]{4,}\b', es.lower())) - stopwords
+
+        sc = len(en_keywords & es_words) / max(len(en_keywords), 1)
+
+        if sc > best_sub:
+
+            best_sub = sc
+
+            sent_idx = idx
+
+    ratio = sent_idx / max(len(en_sents_in_para) - 1, 1)
+
+    zh_idx = round(ratio * (len(zh_sents) - 1))
+
+    return zh_sents[min(zh_idx, len(zh_sents) - 1)]
+
+def parse_ima_bilingual_md(full_text):
+
+    """
+
+    解析 IMA 知识库的中英双语 Markdown 文档。
+
+    支持三种格式：
+
+      1. interleaved（主流）：EN段落→ZH段落→EN段落→ZH段落...（空行分隔）
+
+      2. inline（少数）：EN语句+ZH翻译 在同一段落
+
+      3. separated（新增）：所有英文段落先列完，所有中文段落紧随其后（EN-all-first / ZH-all-after）
+
+    提取 YAML frontmatter 中的 source 字段作为底部链接。
+
+    """
+
+    source_url = ""
+
+    body = full_text
+
+    # Step 1: 提取 YAML frontmatter (--- ... ---)
+
+    if full_text.startswith("---"):
+
+        end_idx = full_text.find("---", 3)
+
+        if end_idx != -1:
+
+            yaml_block = full_text[3:end_idx]
+
+            body = full_text[end_idx + 3:]
+
+            for line in yaml_block.split("\n"):
+
+                line = line.strip()
+
+                if line.startswith("source:"):
+
+                    source_url = line[7:].strip().strip('"').strip("'")
+
+                    break
+
+    # Step 2: 按双换行切段落
+
+    blocks = [b.strip() for b in re.split(r'\n{2,}', body) if b.strip()]
+
+    def has_cn(b):
+
+        return sum(1 for c in b if '\u4e00' <= c <= '\u9fff') >= 3
+
+    def plain_en(b):
+
+        """纯英文段（cn<3 且 单词数>5）"""
+
+        cn = sum(1 for c in b if '\u4e00' <= c <= '\u9fff')
+
+        return cn < 3 and len(re.findall(r'\b\w+\b', b)) > 5
+
+    def is_meta(b):
+
+        """元信息段（日期行、Talk Language、译注等）"""
+
+        if re.match(r'^\d{1,2}\s+\w+\s+\d{4}', b): return True
+
+        if any(kw in b for kw in ['Talk Language', 'Transcript', 'VERIFIED', 'NEEDED',
+
+                                   '以下翻译', '供大家参考', 'subtitles', 'Subtitles']):
+
+            return True
+
+        return False
+
+    # Step 3: 跳过元信息段，找到正文起点（第一个纯英文段落）
+
+    start = 0
+
+    for i, b in enumerate(blocks):
+
+        if is_meta(b):
+
+            continue
+
+        if plain_en(b):
+
+            start = i
+
+            break
+
+    # === Step 4b: 检测 EN-all-first / ZH-all-after 分离式格式 ===
+    # 某些 IMA 文档不是 EN-ZH 交替，而是所有英文段落先列完，再所有中文段落紧随其后
+    # 检测方法：从 start 开始扫描，找到第一个纯中文块的位置
+    # 如果从该位置到末尾全都是中文块，则判定为分离式格式
+    separated_en_blocks = []
+    separated_zh_blocks = []
+    first_cn_idx = None
+    for bi in range(start, len(blocks)):
+        b = blocks[bi]
+        if is_meta(b):
+            continue
+        if first_cn_idx is None and plain_en(b):
+            separated_en_blocks.append(b)
+        elif first_cn_idx is None and has_cn(b):
+            first_cn_idx = bi
+            separated_zh_blocks.append(b)
+        elif first_cn_idx is not None and has_cn(b) and not plain_en(b):
+            separated_zh_blocks.append(b)
+        elif first_cn_idx is not None and plain_en(b):
+            # 又出现英文段，说明不是分离式，回退到 interleaved
+            first_cn_idx = None
+            break
+        else:
+            # 短段落跳过
+            pass
+
+    if first_cn_idx is not None and separated_en_blocks and separated_zh_blocks:
+        # 确认为分离式格式：所有英文在前，所有中文在后
+        print('[parse_ima_bilingual_md] Detected EN-all-first / ZH-all-after format: %d EN blocks, %d ZH blocks' % (len(separated_en_blocks), len(separated_zh_blocks)))
+        
+        # 合并 EN 块为英文句子列表，合并 ZH 块为中文句子列表
+        en_all = " ".join(separated_en_blocks)
+        zh_all = " ".join(separated_zh_blocks)
+        
+        en_sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', en_all) if s.strip()]
+        zh_sents = [s.strip() for s in re.split(r'[。！？]', zh_all) if s.strip()]
+        
+        # 简单对齐：逐句配对，剩余的处理
+        sep_pairs = []
+        min_len = min(len(en_sents), len(zh_sents))
+        for si in range(min_len):
+            sep_pairs.append([en_sents[si], zh_sents[si]])
+        # 多余的 EN 句子（无翻译）
+        for si in range(min_len, len(en_sents)):
+            sep_pairs.append([en_sents[si], ""])
+        # 多余的 ZH 句子（无对应英文）
+        for si in range(min_len, len(zh_sents)):
+            sep_pairs.append(["", zh_sents[si]])
+        
+        print('[parse_ima_bilingual_md] Separated format: %d pairs created' % len(sep_pairs))
+        
+        # 使用这个结果，跳过后面的 interleaved 解析
+        result = sep_pairs
+        if result:
+            print('[parse_ima_bilingual_md] source=%s' % source_url[:60])
+            print('[parse_ima_bilingual_md] %d pairs, %d have zh (separated format)' % (len(result), sum(1 for _,z in result if z.strip())))
+            return source_url, result
+
+    # === Step 4b: 检测 EN-all-first / ZH-all-after 分离式格式 ===
+    # 某些 IMA 文档不是 EN-ZH 交替，而是所有英文段落先列完，再所有中文段落紧随其后
+    # 检测方法：从 start 开始扫描，找到第一个纯中文块的位置
+    # 如果从该位置到末尾全都是中文块，则判定为分离式格式
+    separated_en_blocks = []
+    separated_zh_blocks = []
+    first_cn_idx = None
+    for bi in range(start, len(blocks)):
+        b = blocks[bi]
+        if is_meta(b):
+            continue
+        if first_cn_idx is None and plain_en(b):
+            separated_en_blocks.append(b)
+        elif first_cn_idx is None and has_cn(b):
+            first_cn_idx = bi
+            separated_zh_blocks.append(b)
+        elif first_cn_idx is not None and has_cn(b) and not plain_en(b):
+            separated_zh_blocks.append(b)
+        elif first_cn_idx is not None and plain_en(b):
+            # 又出现英文段，说明不是分离式，回退到 interleaved
+            first_cn_idx = None
+            break
+        else:
+            # 短段落跳过
+            pass
+
+    if first_cn_idx is not None and separated_en_blocks and separated_zh_blocks:
+        # 确认为分离式格式：所有英文在前，所有中文在后
+        print('[parse_ima_bilingual_md] Detected EN-all-first / ZH-all-after format: %d EN blocks, %d ZH blocks' % (len(separated_en_blocks), len(separated_zh_blocks)))
+        
+        # 合并 EN 块为英文句子列表，合并 ZH 块为中文句子列表
+        en_all = " ".join(separated_en_blocks)
+        zh_all = " ".join(separated_zh_blocks)
+        
+        en_sents = [s.strip() for s in re.split(r'(?<=[.!?])\s+', en_all) if s.strip()]
+        zh_sents = [s.strip() for s in re.split(r'[。！？]', zh_all) if s.strip()]
+        
+        # 简单对齐：逐句配对，剩余的处理
+        sep_pairs = []
+        min_len = min(len(en_sents), len(zh_sents))
+        for si in range(min_len):
+            sep_pairs.append([en_sents[si], zh_sents[si]])
+        # 多余的 EN 句子（无翻译）
+        for si in range(min_len, len(en_sents)):
+            sep_pairs.append([en_sents[si], ""])
+        # 多余的 ZH 句子（无对应英文）
+        for si in range(min_len, len(zh_sents)):
+            sep_pairs.append(["", zh_sents[si]])
+        
+        print('[parse_ima_bilingual_md] Separated format: %d pairs created' % len(sep_pairs))
+        
+        # 使用这个结果，跳过后面的 interleaved 解析
+        result = sep_pairs
+        if result:
+            print('[parse_ima_bilingual_md] source=%s' % source_url[:60])
+            print('[parse_ima_bilingual_md] %d pairs, %d have zh (separated format)' % (len(result), sum(1 for _,z in result if z.strip())))
+            return source_url, result
+
+    # Step 4: interleaved 格式解析（EN→ZH 段落交替）
+
+    result = []
+
+    i = start
+
+    while i < len(blocks):
+
+        b = blocks[i]
+
+        if plain_en(b):
+
+            # EN 段落→收集后续所有 ZH 段落作为翻译
+
+            en_text = b
+
+            zh_texts = []
+
+            i += 1
+
+            while i < len(blocks) and has_cn(blocks[i]) and not plain_en(blocks[i]):
+
+                zh_texts.append(blocks[i])
+
+                i += 1
+
+            zh_combined = "。".join(zh_texts) if zh_texts else ""
+
+            result.append([en_text, zh_combined])
+
+        elif has_cn(b):
+
+            # 中文段前面无对应英文 → 尝试 inline 拆分
+
+            m = re.split(r'(?<=[.!?])\s*(?=[\u4e00-\u9fff])', b, maxsplit=1)
+
+            if len(m) >= 2 and m[0].strip() and m[1].strip():
+
+                result.append([m[0].strip(), m[1].strip()])
+
+            else:
+
+                # 纯中文，回退：找第一个中文字符位置
+
+                for ci, c in enumerate(b):
+
+                    if '\u4e00' <= c <= '\u9fff':
+
+                        en_part = b[:ci].strip()
+
+                        zh_part = b[ci:].strip()
+
+                        if en_part:
+
+                            result.append([en_part, zh_part])
+
+                        else:
+
+                            result.append(["", b])
+
+                        break
+
+            i += 1
+
+        else:
+
+            # 短段落/无关信息 → 跳过
+
+            i += 1
+
+    if not result:
+
+        return source_url, []
+
+    print(f'[parse_ima_bilingual_md] source={source_url[:60]}')
+
+    print(f'[parse_ima_bilingual_md] {len(result)} pairs, {sum(1 for _,z in result if z.strip())} have zh')
+
+    return source_url, result
+
+import numpy as np
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
+    print("[step2] sentence_transformers not installed, BGE dedup skipped")
+
+def llm_sentence_align(en_sents, zh_paragraphs):
+    if not en_sents:
+        return []
+    en_text = "\n".join(f"[{i}] {s}" for i, s in enumerate(en_sents))
+    zh_text = "\n".join(f"[{i}] {s}" for i, s in enumerate(zh_paragraphs) if s.strip())
+    prompt = f"""You are a bilingual sentence alignment assistant. Given a list of English sentences (from an Amruta talk) and a list of Chinese paragraphs (the official translation from Sahaja.live), please align them.
+
+**Rules:**
+1. For each English sentence, find the best matching Chinese text (it could be 1:1, 1:N (one English -> multiple Chinese), or N:1 (multiple English -> one Chinese)).
+2. **CRITICAL RULE — Sentence-Level Alignment Only**: The relationship between English and Chinese MUST be one of exactly three types:
+   - **1:1** — One English sentence ↔ One Chinese sentence
+   - **N:1** — Multiple English sentences → One Chinese sentence
+   - **1:N** — One English sentence → Multiple Chinese sentences
+   - **FORBIDDEN**: Many-to-many vague mapping (a big chunk of English mixed with a big chunk of Chinese without clear boundaries)
+3. Preserve the official Chinese text EXACTLY - do not rephrase or summarize.
+4. If a Chinese paragraph covers multiple English sentences, assign the SAME Chinese text to each English sentence (mark them as merged).
+5. If an English sentence has no matching Chinese, use "" for the Chinese field.
+6. If an English sentence could match only a portion of a Chinese paragraph, split the paragraph at commas or sentence boundaries and assign the relevant portion.
+7. **Format requirement**: Each English sentence must have a clearly paired Chinese sentence. Do not group multiple English sentences together and then list multiple Chinese sentences separately.
+
+**Input:**
+
+=== ENGLISH SENTENCES ===
+{en_text}
+
+=== CHINESE PARAGRAPHS ===
+{zh_text}
+
+**Output format:** Return ONLY a valid JSON array, nothing else. Each element: [en_index, zh_index_or_null, "exact"|"partial"|"no_match"]
+  - en_index: index of the English sentence (0-based)
+  - zh_index_or_null: index of the Chinese paragraph that contains the translation, or null if no match
+  - "exact": 1:1 or 1:N alignment
+  - "partial": N:1 alignment (multiple English map to same Chinese)
+  - "no_match": no Chinese found
+
+Example: [[0, 2, "exact"], [1, null, "no_match"], [2, 2, "exact"], [3, 2, "partial"]]
+"""
+    api_key = os.environ.get("AGNES_API_KEY", "") or os.environ.get("AGNES_AI_KEY", "")
+    if not api_key:
+        print("[llm_align] AGNES_API_KEY not set, falling back to empty")
+        return [[s, "", "aliyun"] for s in en_sents]
+    data = json.dumps({
+        "model": "agnes-2.0-flash",
+        "messages": [
+            {"role": "system", "content": "You are a precise bilingual alignment assistant. Output only JSON."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.0,
+        "max_tokens": 5120,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://apihub.agnes-ai.com/v1/chat/completions",
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=120)
+        result = json.loads(resp.read().decode("utf-8"))
+        content = result["choices"][0]["message"]["content"].strip()
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        align_result = json.loads(content)
+        aligned = []
+        for en_idx, zh_idx, match_type in align_result:
+            en_s = en_sents[en_idx]
+            if zh_idx is not None and 0 <= zh_idx < len(zh_paragraphs):
+                zh_s = zh_paragraphs[zh_idx].strip()
+            else:
+                zh_s = ""
+            aligned.append([en_s, zh_s, "llm"])
+        return aligned
+    except Exception as e:
+        print(f"[llm_align] Agnes API call failed: {e}")
+        if zh_paragraphs and zh_paragraphs[0].strip():
+            print(f"[llm_align] Using fallback alignment: keeping Chinese text in first sentence")
+            return [[en_sents[0], zh_paragraphs[0], "positional"]] + \
+                   [[s, "", "positional"] for s in en_sents[1:]]
+        return [[s, "", "aliyun"] for s in en_sents]
+
+def do_alignment_and_audit():
+    """句级对齐：对每段分别切句、分别调用LLM对齐，输出段落级结构"""
+    global pairs, title_cn, content
+    structured = []
+    
+    # 检查是否是官方翻译场景（en_para 为空字符串）
+    is_official_translation = len(pairs) > 0 and isinstance(pairs[0], tuple) and pairs[0][0] == ""
+    
+    if is_official_translation:
+        # 官方翻译场景：中文来自 F盘文档，英文用 amruta.today 的 content
+        # 正确对齐：英文句子按顺序分配到中文段落
+        en_sents = split_sentences(content)
+        zh_paras = [p[1] for p in pairs]  # 从 pairs 提取中文
+        
+        if en_sents and zh_paras:
+            # 策略：将英文句子按顺序分配到中文段落
+            # 每个中文段落可能有 0 个或多个英文句子
+            # 按中文段落字数比例分配英文句子
+            
+            total_zh_chars = sum(len(z) for z in zh_paras)
+            en_idx = 0
+            
+            for zh_idx, zh_para in enumerate(zh_paras):
+                # 估算这个中文段落应该分配的英文句子数
+                zh_chars = len(zh_para)
+                if total_zh_chars > 0:
+                    ratio = zh_chars / total_zh_chars
+                    target_sents = max(1, int(len(en_sents) * ratio))
+                else:
+                    target_sents = 1
+                
+                # 收集英文句子
+                assigned_sents = []
+                for _ in range(target_sents):
+                    if en_idx < len(en_sents):
+                        assigned_sents.append(en_sents[en_idx])
+                        en_idx += 1
+                
+                # 如果最后一个中文段落还有剩余英文句子
+                if zh_idx == len(zh_paras) - 1 and en_idx < len(en_sents):
+                    assigned_sents.extend(en_sents[en_idx:])
+                
+                if assigned_sents:
+                    sentences = [{"en": s, "zh": zh_para} for s in assigned_sents]
+                    structured.append({
+                        "en_para": " ".join(assigned_sents),
+                        "zh_para": zh_para,
+                        "sentences": sentences
+                    })
+            
+            print(f"[translate] 官方翻译对齐完成: {len(structured)}段（{len(en_sents)}英文句子分配到{len(zh_paras)}中文段落）")
+        else:
+            print("[translate] ⚠ 官方翻译场景：英文或中文为空，跳过")
+    else:
+        # 普通场景：pairs 中已有英文
+        for en_para, zh_para in pairs:
+            en_sents = split_sentences(en_para)
+            if not en_sents:
+                continue
+            aligned = llm_sentence_align(en_sents, [zh_para])
+            sentences = [{"en": en, "zh": zh} for en, zh, _ in aligned]
+            # 逗号切割后处理
+            for i in range(len(sentences)):
+                zh = sentences[i].get("zh", "") or ""
+                if '，' in zh and i + 1 < len(sentences):
+                    parts = zh.split('，', 1)
+                    next_zh = sentences[i+1].get("zh", "") or ""
+                    combined_next = parts[1] + '，' + next_zh
+                    sentences[i]["zh"] = parts[0]
+                    sentences[i+1]["zh"] = combined_next
+            # 左右翼替换
+            for s in sentences:
+                z = s.get("zh", "") or ""
+                z = z.replace("左翼还是右翼", "偏左或偏右")
+                z = z.replace("左翼或右翼", "偏左或偏右")
+                s["zh"] = z
+            structured.append({"en_para": en_para, "zh_para": zh_para, "sentences": sentences})
+    
+    pairs = structured
+    cn = sum(1 for item in pairs for s in item["sentences"] if (s.get("zh") or "").strip())
+    print(f"[translate] 段落级对齐完成: {len(pairs)}段, {cn}句有中文")
+
+def extract_date_from_url(url):
+    """从URL中提取月份-日子 (MM-DD)。
+    支持 sahaja.live、amruta.org 等常见日期格式。
+    返回 (month_day_str, full_date_str) 或 (None, None)。
+    
+    示例：
+      https://sahaja.live/...1979-06-15... -> ("06-15", "1979-06-15")
+      https://www.amruta.org/1979/06/15/... -> ("06-15", "1979-06-15")
+    """
+    if not url:
+        return None, None
+    import re as _re_date
+    
+    # Pattern 1: YYYY-MM-DD or YYYY/MM/DD
+    m = _re_date.search(r'(\d{4})[-/](\d{2})[-/](\d{2})', url)
+    if m:
+        full = f'{m.group(1)}-{m.group(2)}-{m.group(3)}'
+        md = f'{m.group(2)}-{m.group(3)}'
+        return md, full
+    
+    # Pattern 2: YYYYMMDD (compact)
+    m = _re_date.search(r'(\d{4})(\d{2})(\d{2})', url)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1900 <= y <= 2100 and 1 <= mo <= 12 and 1 <= d <= 31:
+            full = f'{m.group(1)}-{m.group(2)}-{m.group(3)}'
+            md = f'{m.group(2)}-{m.group(3)}'
+            return md, full
+    
+    return None, None
+
+
+
+def search_local_sahaja_folder(date_str):
+    """搜索 F盘本地 sahaja live talks 文件夹，查找官方翻译文档"""
+    global sahaja_link, pairs, title_cn, ima_kb_doc_title, ima_kb_source_url
+    
+    sahaja_dir = r"F:\霎哈嘉瑜伽\sahaja live talks"
+    if not os.path.exists(sahaja_dir):
+        print(f"[translate_article] ⚠ F盘目录不存在: {sahaja_dir}")
+        return False
+    
+    # 查找匹配的文档
+    import glob
+    pattern = os.path.join(sahaja_dir, f"{date_str.replace('-', '')}*")
+    files = glob.glob(pattern)
+    
+    # 也尝试 YYYY-MM-DD 格式
+    pattern2 = os.path.join(sahaja_dir, f"{date_str}*")
+    files.extend(glob.glob(pattern2))
+    
+    if not files:
+        print(f"[translate_article] ⚠ F盘未找到 {date_str} 的文档")
+        return False
+    
+    # 取第一个匹配的文件
+    target_file = files[0]
+    filename = os.path.basename(target_file)
+    print(f"[translate_article] ✅ 找到官方翻译文档: {filename}")
+    
+    # 读取文件内容
+    with open(target_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # 提取 YAML frontmatter
+    frontmatter = re.search(r'^---\n(.*?)\n---', content, re.DOTALL)
+    if frontmatter:
+        fm = frontmatter.group(1)
+        title_match = re.search(r'title:\s*"([^"]+)"', fm)
+        source_match = re.search(r'source:\s*(.+)', fm)
+        
+        if title_match:
+            title_cn = title_match.group(1)
+            print(f"[translate_article] 文档标题: {title_cn}")
+        if source_match:
+            sahaja_link = source_match.group(1).strip()
+            ima_kb_source_url = sahaja_link
+            print(f"[translate_article] source URL: {sahaja_link}")
+            ima_kb_doc_title = title_cn if 'title_cn' in dir() else filename
+    
+    # 提取正文（跳过 YAML frontmatter）
+    body = re.sub(r'^---\n.*?\n---\n', '', content, flags=re.DOTALL)
+    
+    # 按空行分割成段落
+    blocks = [b.strip() for b in re.split(r'\n{2,}', body) if b.strip()]
+
+    # 提取中英文段落（交替排列）
+    en_blocks = []
+    zh_blocks = []
+    for block in blocks:
+        cn_count = sum(1 for c in block if '\u4e00' <= c <= '\u9fff')
+        en_count = sum(1 for c in block if c.isalpha() and ord(c) < 128)
+
+        # 跳过元信息块
+        if cn_count >= 3 and (re.search(r'\d{4}年', block) or re.search(r'19\d{2}\s+\w+', block)):
+            continue
+
+        if cn_count > en_count and cn_count >= 3:
+            zh_blocks.append(block)
+        elif en_count > cn_count:
+            en_blocks.append(block)
+
+    # === 关键：只截取与 amruta.today 抓取英文对应的中文段落 ===
+    # 策略：在官方翻译文档中直接搜索 amruta 的英文内容，找到起始位置
+    # 然后取对应的中文段落
+    
+    # amruta.today 的英文
+    amruta_en_text = globals().get('_amruta_en_for_matching', '')
+    
+    filtered_zh_blocks = []
+    
+    if amruta_en_text and en_blocks and zh_blocks:
+        # 在文档中搜索 amruta 的英文内容
+        # 取 amruta 的前 200 字符进行搜索
+        search_text = amruta_en_text[:200]
+        doc_pos = content.find(search_text)
+        
+        if doc_pos >= 0:
+            # 从文档开头到搜索位置的段落数
+            before_text = content[:doc_pos]
+            # 数双换行
+            double_newlines = before_text.count('\n\n')
+            
+            # 更精确：从正文开始到搜索位置，数英文段落数
+            fm_end = content.find('\n---\n', content.find('---\n'))
+            body_before = content[fm_end+4:doc_pos]
+            body_paragraphs = body_before.split('\n\n')
+            en_count_before = 0
+            for p in body_paragraphs:
+                cn_count = sum(1 for c in p if '\u4e00' <= c <= '\u9fff')
+                en_count_c = sum(1 for c in p if c.isalpha() and ord(c) < 128)
+                # 跳过标题行（包含日期格式的）
+                if re.search(r'19\d{2}\s+\w+', p):
+                    continue
+                if cn_count < en_count_c and en_count_c > 0:
+                    en_count_before += 1
+            en_start_idx = en_count_before  # 下一个英文段落的索引
+            
+            # 从搜索位置开始，找到 amruta 内容的末尾
+            end_search = amruta_en_text[-100:] if len(amruta_en_text) > 100 else amruta_en_text
+            doc_end_pos = content.find(end_search)
+            if doc_end_pos >= 0:
+                # 从搜索位置到末尾位置之间的英文段落数
+                chunk = content[doc_pos:doc_end_pos + 100]
+                chunk_paragraphs = chunk.split('\n\n')
+                en_in_chunk = 0
+                for p in chunk_paragraphs:
+                    cn_count = sum(1 for c in p if '\u4e00' <= c <= '\u9fff')
+                    en_count_c = sum(1 for c in p if c.isalpha() and ord(c) < 128)
+                    if cn_count < en_count_c and en_count_c > 0:
+                        en_in_chunk += 1
+                en_end_idx = en_start_idx + en_in_chunk - 1  # -1 因为 en_start_idx 本身就是一个英文段落
+            else:
+                en_end_idx = en_start_idx + 2  # 默认 3 段
+            
+            # 取 en_start_idx 到 en_end_idx 对应的中文段落
+            filtered_zh_blocks = [zh_blocks[i] for i in range(en_start_idx, min(en_end_idx + 1, len(zh_blocks)))]
+            
+            print(f"[translate_article] 找到 amruta 英文匹配: 文档位置 [{en_start_idx}..{en_end_idx}]")
+            print(f"[translate_article] 截取中文段落: {len(filtered_zh_blocks)} 段 (zh[{en_start_idx}]..zh[{en_end_idx}])")
+        else:
+            print("[translate_article] ⚠ 未在官方翻译文档中找到 amruta 英文，使用全部中文")
+            filtered_zh_blocks = zh_blocks
+    else:
+        filtered_zh_blocks = zh_blocks
+
+    pairs = []
+    for zh in filtered_zh_blocks:
+        pairs.append(("", zh))
+
+    print(f"[translate_article] ✅ 官方翻译: {len(filtered_zh_blocks)} 个中文段落（从 {len(zh_blocks)} 中筛选，英文将从 amruta.today 抓取）")
+    
+    # 不再检查漏句（英文用 amruta.today 的，不在官方翻译文档里）
+    globals()['official_translation_incomplete'] = False
+    
+    return True
+
+def search_ima_kb(query_text, phase_name, date_str=None):
+
+    global sahaja_link, pairs, title_cn, ima_translation_fail_reason, is_machine_translation
+
+    cid = os.environ.get("IMA_CLIENT_ID", "")
+
+    aik = os.environ.get("IMA_API_KEY", "")
+
+    if not cid or not aik:
+
+        return False
+
+    print(f'[translate_article] IMA KB search {phase_name}: query=[{query_text[:120]}]')
+
+    ima_headers = {"ima-openapi-clientid": cid, "ima-openapi-apikey": aik, "Content-Type": "application/json"}
+
+    safe_query = query_text.replace("'", "").replace('"', "")[:200]
+
+    query = json.dumps({"query": safe_query, "knowledge_base_id": "sEgPPEWFuYNq58qNKa6FunW0CAU7wv7JwMEXCUJwaVY=", "page_num": 1, "page_size": 20})
+
+    try:
+
+        req_ima = urllib.request.Request("https://ima.qq.com/openapi/wiki/v1/search_knowledge", data=query.encode(), headers=ima_headers, method='POST')
+
+        resp_ima = urllib.request.urlopen(req_ima, timeout=15)
+
+        ima_result = json.loads(resp_ima.read())
+
+        docs = ima_result.get("data", {}).get("info_list", [])
+
+        if not docs:
+
+            print(f'[translate_article] IMA KB {phase_name}: no docs found')
+
+            return False
+
+        print(f'[translate_article] IMA KB {phase_name}: found {len(docs)} doc(s)')
+
+        # 按中文标题优先排序，但会遍历所有 doc 直到找到日期匹配的
+        zh_docs = []
+        en_docs = []
+        for doc in docs:
+            title = doc.get("title", "")
+            cn = sum(1 for c in title if "一" <= c <= "鿿")
+            print(f'[translate_article]   {title[:50]} | cn={cn}')
+            if cn >= 3:
+                zh_docs.append(doc)
+            else:
+                en_docs.append(doc)
+        
+        # 优先遍历中文 doc，然后英文 doc
+        ordered_docs = zh_docs + en_docs
+        
+        # 用于 fallback：第一个成功的文档
+        fallback_text = None
+        fallback_src_url = None
+        fallback_parsed_pairs = None
+        best_matched = False
+        
+        # 限制每 Phase 最多尝试前 5 个文档，减少 API 调用量（用户要求 2026-06-30）
+        MAX_DOCS_PER_PHASE = 5
+        docs_to_try = ordered_docs[:MAX_DOCS_PER_PHASE]
+        print(f'[translate_article]   trying first {len(docs_to_try)} docs (limited from {len(ordered_docs)})')
+
+        # === 记录 IMA KB 搜索结果（供审核/用户查看） ===
+        search_results = []
+        for idx, doc in enumerate(ordered_docs):
+            title = doc.get("title", "")
+            picked = "YES <-- SELECTED" if idx < MAX_DOCS_PER_PHASE else "NO (limited)"
+            is_zh = "中文标题" if sum(1 for c in title if "\u4e00" <= c <= "\u9fff") >= 3 else "英文标题"
+            search_results.append({"title": title, "picked": picked, "type": is_zh})
+        # Mark which doc was actually selected
+        try:
+            selected_title = ima_kb_doc_title if "ima_kb_doc_title" in dir() else ""
+            for sr in search_results:
+                if sr["title"] == selected_title:
+                    sr["selected"] = True
+                    break
+        except Exception:
+            pass
+        try:
+            with open("/tmp/ima_kb_search_results.json", "w", encoding="utf-8") as rf:
+                json.dump(search_results, rf, ensure_ascii=False, indent=2)
+            print("[translate_article] IMA KB search results written to /tmp/ima_kb_search_results.json")
+        except Exception as e:
+            print("[translate_article] Failed to write search results: %s" % e)
+
+        # === 记录 IMA KB 搜索结果（供审核/用户查看） ===
+        search_results = []
+        for idx, doc in enumerate(ordered_docs):
+            title = doc.get("title", "")
+            picked = "YES <-- SELECTED" if idx < MAX_DOCS_PER_PHASE else "NO (limited)"
+            is_zh = "中文标题" if sum(1 for c in title if "\u4e00" <= c <= "\u9fff") >= 3 else "英文标题"
+            search_results.append({"title": title, "picked": picked, "type": is_zh})
+        # Mark which doc was actually selected
+        try:
+            selected_title = ima_kb_doc_title if "ima_kb_doc_title" in dir() else ""
+            for sr in search_results:
+                if sr["title"] == selected_title:
+                    sr["selected"] = True
+                    break
+        except Exception:
+            pass
+        try:
+            with open("/tmp/ima_kb_search_results.json", "w", encoding="utf-8") as rf:
+                json.dump(search_results, rf, ensure_ascii=False, indent=2)
+            print("[translate_article] IMA KB search results written to /tmp/ima_kb_search_results.json")
+        except Exception as e:
+            print("[translate_article] Failed to write search results: %s" % e)
+
+        for doc_idx, doc in enumerate(docs_to_try):
+            fid = doc.get("media_id", "")
+            if not fid:
+                continue
+            
+            try:
+                media_req = urllib.request.Request(
+                    f"https://ima.qq.com/openapi/wiki/v1/get_media_info?media_id={fid}",
+                    headers=ima_headers
+                )
+                raw_resp = json.loads(urllib.request.urlopen(media_req, timeout=15).read())
+                media_code = raw_resp.get("code", 0)
+                media_msg = raw_resp.get("msg", "")
+                if media_code != 0:
+                    print(f'[translate_article]   doc#{doc_idx} get_media_info ERROR: code={media_code}, msg={media_msg}')
+                    if media_code == 220021:
+                        print(f'[translate_article]   ⛔ IMA KB rate limited (daily quota exhausted), stopping doc iteration')
+                        globals()['ima_translation_fail_reason'] = f"IMA KB {phase_name}: get_media_info 返回 code={media_code}（{media_msg}）"
+                        break
+                    continue
+                media_data = raw_resp.get("data", {})
+                dl_url = media_data.get("url_info", {}).get("url", "")
+                dl_hdrs = media_data.get("url_info", {}).get("headers", {})
+
+                if not dl_url:
+                    print(f'[translate_article]   doc#{doc_idx} no dl_url in get_media_info response')
+                    continue
+                
+                md_req = urllib.request.Request(dl_url, headers=dl_hdrs)
+                zh_text = urllib.request.urlopen(md_req, timeout=30).read().decode("utf-8").replace(chr(13)+chr(10), chr(10))
+                
+                if not zh_text.strip():
+                    continue
+                
+                # Parse source URL for date validation
+                src_url, parsed_pairs = parse_ima_bilingual_md(zh_text)
+                
+                # === DATE VALIDATION: check if IMA source URL date matches article date ===
+                if src_url and date_str:
+                    src_md, src_full = extract_date_from_url(src_url)
+                    article_md = date_str[5:] if len(date_str) >= 10 and date_str[4] == '-' else date_str
+                    
+                    if src_md and src_md == article_md:
+                        # PERFECT MATCH: this is the correct document
+                        print(f'[translate_article]   doc#{doc_idx} DATE MATCH: source={src_full}, article={date_str} ✓✓✓')
+                        sahaja_link = src_url
+                        ima_kb_doc_title = doc.get("title", "")
+                        ima_kb_source_url = src_url
+                        print(f'[translate_article] IMA source link (verified): {sahaja_link[:80]}')
+                        print(f'[translate_article] IMA KB doc title: {ima_kb_doc_title[:80]}')
+                        
+                        if parsed_pairs:
+                            pairs = parsed_pairs
+                            # Convert to structured format
+                            pairs = [{"en_para": en, "zh_para": zh,
+                                      "sentences": [{"en": en, "zh": zh}]} for en, zh in pairs]
+                            print("[translate_article] Converted IMA pairs: %d" % len(pairs))
+                            print(f'[translate_article] IMA KB OK: {len(pairs)} pairs, {sum(1 for _,z in pairs if z.strip())} have zh')
+                            best_matched = True
+                            ima_translation_fail_reason = ""  # ✅ 成功，清空之前 Phase 的失败原因
+                            return True
+                        
+                        # Chinese-only fallback
+                        zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
+                        pairs = [["", s] for s in zh_sentences]
+                        print(f'[translate_article] IMA KB OK (zh-only fallback, verified date): {len(pairs)} zh-sentences')
+                        best_matched = True
+                        ima_translation_fail_reason = ""  # ✅ 成功，清空
+                        return True
+                    
+                    elif src_md:
+                        print(f'[translate_article]   doc#{doc_idx} DATE MISMATCH: source={src_full} vs article={date_str} ✗ (checking next...)')
+                        # Save as fallback but keep looking
+                        if fallback_text is None and parsed_pairs:
+                            fallback_text = zh_text
+                            fallback_src_url = src_url
+                            fallback_parsed_pairs = parsed_pairs
+                    else:
+                        print(f'[translate_article]   doc#{doc_idx} NO DATE in source URL, using as fallback')
+                        if fallback_text is None and parsed_pairs:
+                            fallback_text = zh_text
+                            fallback_src_url = src_url
+                            fallback_parsed_pairs = parsed_pairs
+                else:
+                    # src_url is empty BUT we have a date to match → save as fallback
+                    if date_str:
+                        print(f'[translate_article]   doc#{doc_idx} empty source URL but date_str is set, saving as fallback')
+                        if fallback_text is None and parsed_pairs:
+                            fallback_text = zh_text
+                            fallback_src_url = src_url
+                            fallback_parsed_pairs = parsed_pairs
+                    else:
+                        # No date to validate at all, just use first valid doc
+                        if parsed_pairs:
+                            if src_url:
+                                sahaja_link = src_url
+                                print(f'[translate_article] IMA source link: {sahaja_link[:80]}')
+                            ima_kb_doc_title = doc.get("title", "")
+                            ima_kb_source_url = src_url
+                            print(f'[translate_article] IMA KB doc title: {ima_kb_doc_title[:80]}')
+                            pairs = parsed_pairs
+                            print(f'[translate_article] IMA KB OK: {len(pairs)} pairs')
+                            ima_translation_fail_reason = ""  # ✅ 成功，清空失败原因
+                            return True
+                        
+                        zh_sentences = [s.strip() for s in re.split(r'[。！？]', zh_text) if len(s.strip()) >= 2]
+                        pairs = [["", s] for s in zh_sentences]
+                        print(f'[translate_article] IMA KB OK (zh-only): {len(pairs)} zh-sentences')
+                        ima_translation_fail_reason = ""  # ✅ 有中文，清空失败原因
+                        return True
+                    
+            except Exception as e:
+                print(f'[translate_article]   doc#{doc_idx} download/parse failed: {e}')
+                continue
+        
+        # === FALLBACK: no doc had matching date, use first valid one with WARNING ===
+        if fallback_text and fallback_parsed_pairs:
+            sahaja_link = fallback_src_url
+            # Fallback - look for the first doc that had a valid title
+            ima_kb_doc_title = docs_to_try[0].get("title", "") if docs_to_try else ""
+            ima_kb_source_url = fallback_src_url
+            if sahaja_link:
+                src_md, src_full = extract_date_from_url(sahaja_link)
+                article_md = date_str[5:] if date_str and len(date_str) >= 10 else "?"
+                print(f'[translate_article] ⚠ DATE MISMATCH (using fallback): IMA link date={src_md or "?"} vs article={article_md}')
+                print(f'[translate_article] IMA source link (fallback, UNVERIFIED): {sahaja_link[:80]}')
+            # 记录 fallback 原因供底部透明显示
+            ima_translation_fail_reason = (
+                f"IMA KB {phase_name}: 搜索到 {len(docs_to_try)} 个文档，"
+                f"全部日期不匹配文章日期 (文章={article_md}，"
+                f"匹配文档日期={src_md or '?'})，使用日期最接近文档"
+            )
+            pairs = fallback_parsed_pairs
+            print(f'[translate_article] IMA KB OK (fallback, date NOT verified): {len(pairs)} pairs')
+            return True
+        
+        # Chinese-only fallback for first valid doc
+        if fallback_text:
+            sahaja_link = fallback_src_url
+            if sahaja_link:
+                src_md, src_full = extract_date_from_url(sahaja_link)
+                article_md = date_str[5:] if date_str and len(date_str) >= 10 else "?"
+                print(f'[translate_article] ⚠ DATE MISMATCH (zh-only fallback): IMA link date={src_md or "?"} vs article={article_md}')
+            ima_translation_fail_reason = (
+                f"IMA KB {phase_name}: 搜索到 {len(docs_to_try)} 个文档，"
+                f"日期不匹配 (文章={article_md}，"
+                f"匹配文档={src_md or '?'})，使用中文-only fallback"
+            )
+            
+            zh_sentences = [s.strip() for s in re.split(r'[。！？]', fallback_text) if len(s.strip()) >= 2]
+            pairs = [["", s] for s in zh_sentences]
+            print(f'[translate_article] IMA KB OK (zh-only fallback, date NOT verified): {len(pairs)} zh-sentences')
+            return True
+        
+        print(f'[translate_article] IMA KB {phase_name}: all {len(docs_to_try)} docs failed to produce valid content')
+        if ima_translation_fail_reason:
+            print(f'[translate_article] ⛔ IMA KB failure reason: {ima_translation_fail_reason}')
+        else:
+            # 没有限速但也找不到：记录通用失败原因用于邮件底部透明显示
+            ima_translation_fail_reason = (
+                f"IMA KB {phase_name}: 搜索到 {len(docs_to_try)} 个文档"
+                f"，全部无法产出有效中文"
+            )
+            print(f'[translate_article] ⛔ IMA KB failure: {ima_translation_fail_reason}')
+        return False
+
+    except Exception as e:
+
+        print(f'[translate_article] IMA KB fail: {e}')
+
+        return False
+
+# ============ IMA KB Date-Based Search (with retries) ============ #
+
+MAX_RETRIES = 3
+
+def search_ima_kb_with_retry(query_text, phase_name, date_str=None):
+
+    """带重试机制的IMA知识库搜索"""
+
+    for attempt in range(MAX_RETRIES):
+
+        try:
+
+            result = search_ima_kb(query_text, phase_name, date_str=date_str)
+
+            if result:
+
+                print(f'[translate_article] {phase_name} succeeded on attempt {attempt+1}')
+
+                return True
+
+            else:
+
+                print(f'[translate_article] {phase_name} returned empty, retry {attempt+1}/{MAX_RETRIES}')
+
+        except Exception as e:
+
+            print(f'[translate_article] {phase_name} failed (attempt {attempt+1}/{MAX_RETRIES}): {e}')
+
+        if attempt < MAX_RETRIES - 1:
+
+            import time
+
+            time.sleep(2)  # 等待2秒后重试
+
+    print(f'[translate_article] {phase_name} FAILED after {MAX_RETRIES} attempts')
+
+    return False
+
+if not pairs:
+
+    # Phase 1: search by date string (YYYY-MM-DD) - date_str = e.g. "1978-06-12"
+
+    # Phase 1: search by date from source URL (correct year), fallback to article date
+    search_date = date_str
+    if link:
+        import re as _re
+        _m = _re.search(r'/(\d{4})[-/](\d{2})[-/]?(\d{2})', link)
+        if _m:
+            extracted = f"{_m.group(1)}-{_m.group(2)}-{_m.group(3)}"
+            # Trust link date only if MM-DD matches article date (same talk)
+            if extracted[5:] == date_str[5:]:
+                search_date = extracted
+                if search_date != date_str:
+                    print(f"[translate_article] Phase1 using date from source URL: {search_date} (article date was {date_str})")
+            else:
+                print(f"[translate_article] WARNING: link date {extracted} != article date {date_str}, trusting article date")
+    
+        # === 首先搜索 F盘本地 sahaja live talks 文件夹 ===
+    print("[translate_article] === 搜索 F盘本地 sahaja live talks 文件夹 ===")
+    # 设置 amruta.today 英文供匹配
+    globals()['_amruta_en_for_matching'] = content
+    local_found = search_local_sahaja_folder(date_str)
+    if local_found and pairs and has_chinese(pairs):
+        print("[translate_article] ✅ 找到官方翻译，使用本地翻译")
+        # 设置标记，跳过 IMA KB 搜索
+        skip_ima_search = True
+        phase1_ok = True  # 跳过 Phase1
+    else:
+        skip_ima_search = False
+        phase1_ok = False
+        print("[translate_article] ⚠ 未找到本地翻译，继续搜索 IMA KB...")
+
+    if not skip_ima_search:
+        phase1_ok = search_ima_kb_with_retry(search_date, "Phase1(date)", date_str=date_str)
+
+    # Phase 2: if empty, search by body content
+
+    if not phase1_ok:
+        print(f'[translate_article] Phase1 date search empty, trying correct date from source URL...')
+    
+    # Try extracting correct date from source URL (e.g., "1979/06/15" from amruta.org or sahaja.live)
+    import re as _re2
+    correct_date = None
+    phase1_retry_ok = False
+    if link:
+        _m = _re2.search(r'/?(\d{4})[-/](\d{2})[-/]?(-?\d{2})', link)
+        if _m:
+            _day = _m.group(3).lstrip('-') if _m.group(3).startswith('-') else _m.group(3)
+            correct_date = f'{_m.group(1)}-{_m.group(2)}-{_day}'
+    
+    if correct_date and correct_date != date_str:
+        # Only use link date if MM-DD matches article date (same talk)
+        if correct_date[5:] == date_str[5:]:
+            print(f'[translate_article] Found correct date from source URL: {correct_date} (amruta.today said {date_str})')
+            phase1_retry_ok = search_ima_kb_with_retry(correct_date, "Phase1(correct_date_from_URL)", date_str=date_str)
+            if phase1_retry_ok:
+                print(f'[translate_article] Phase1 succeeded with correct date from URL!')
+        else:
+            print(f'[translate_article] SKIP Phase1 retry: link date {correct_date} != article date {date_str} (different talk)')
+    else:
+        print(f'[translate_article] No correct date found in source URL, moving to Phase 2')
+    
+    if not phase1_ok and not phase1_retry_ok:
+        # Phase 2: extract first 2 English sentences/paragraphs from content for better search
+        paras = [p.strip() for p in content.split(chr(10)) if p.strip()][:2]
+        if paras:
+            search_text = ' '.join(paras)[:500]
+        else:
+            search_text = content[:200]
+        print(f'[translate_article] Phase2 using {len(search_text)} chars for search...')
+        phase2_ok = search_ima_kb_with_retry(search_text, 'Phase2(body)', date_str=date_str)
+    
+        # Phase 3: month+day (no year) + first 200 chars - handles wrong years in amruta.today
+        if not phase2_ok:
+            # Extract month-day from date_str (e.g., "06-15" from "1972-06-15")
+            month_day = date_str[5:] if len(date_str) >= 10 and date_str[4] == '-' else date_str
+            search_text_md = f'{month_day} {content[:200]}'
+            print(f'[translate_article] Phase2 also empty, Phase3 using month-day+body: month_day={month_day}, text_len={len(search_text_md)}')
+            search_ima_kb_with_retry(search_text_md, "Phase3(md+body)", date_str=date_str)
+
+if pairs and has_chinese(pairs):
+
+    do_alignment_and_audit()
+
+else:
+
+        # 如果官方翻译有漏句，用阿里云补充
+    if globals().get('official_translation_incomplete', False):
+        print("[translate_article] ⚠ 官方翻译有漏句，使用阿里云补充...")
+        # 获取缺少的英文段落
+        missing_en = []
+        for i, pair in enumerate(pairs):
+            if not pair.get("zh_para", "").strip():
+                missing_en.append(pair.get("en_para", ""))
+        
+        # 用阿里云翻译缺少的段落
+        for en in missing_en:
+            zh = aliyun_translate_title(en)
+            pairs.append({"en_para": en, "zh_para": zh or "", "source": "aliyun"})
+        
+        print(f"[translate_article] ✅ 补充了 {len(missing_en)} 个段落")
+    # Aliyun fallback
+
+    amruta_sents = split_sentences(content)
+
+    if amruta_sents:
+
+        aligned = []
+
+        for s in amruta_sents:
+
+            zh = aliyun_translate_title(s)
+
+            aligned.append([s, zh or ""])
+
+        pairs = [list(p) for p in aligned]
+        # 转换为结构化格式（与 do_alignment_and_audit 输出一致），
+        # 避免下游 flatten/rebuild_pair_html 期望 dict 格式时崩溃
+        pairs = [{"en_para": en, "zh_para": zh,
+                  "sentences": [{"en": en, "zh": zh}]} for en, zh in pairs]
+        
+        print(f"[translate_article] Aliyun done: {len(pairs)} sentences, converted to structured format")
+        is_machine_translation = True
+        # Append Aliyun info to fail reason for transparency
+        globals()['ima_translation_fail_reason'] = globals()['ima_translation_fail_reason'] + ("; " if globals()['ima_translation_fail_reason'] else "") + "已使用阿里云机器翻译降级"
+
+# Fallback: no pairs at all
+
+if not pairs:
+
+    paras = [p.strip() for p in content.split(chr(10)) if p.strip()]
+
+    pairs = [[p, ""] for p in paras]
+
+def build_key_word_map_from_pairs(pairs_list):
+    """从段落级 pairs 中提取 EN关键词 -> ZH官方翻译 的对照表"""
+    word_map = {}
+    stopwords = {"that","this","with","have","your","from","they","them","will","what","when",
+                 "into","been","were","also","just","more","than","then","there","their",
+                 "which","still","only","such","very","even","does","dont","cant","wont","should"}
+
+    for item in pairs_list:
+        if not isinstance(item, dict):
+            continue
+        zh_para = (item.get("zh_para") or "").strip()
+        for s in item.get("sentences", []):
+            en_str = (s.get("en") or "").strip()
+            if not en_str or not zh_para:
+                continue
+            en_kws = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split()
+                      if len(w.strip(".!,:;!?()-_[]")) > 2 and w.strip(".!,:;!?()-_[]").lower() not in stopwords]
+            if not en_kws:
+                continue
+            zh_parts = re.split(r"[，。；]", zh_para)
+            for kw in en_kws:
+                for zp in zh_parts:
+                    zp = zp.strip()
+                    if 3 <= len(zp) <= 10:
+                        word_map[kw] = zp
+    return word_map
+
+def translate_title_with_word_map(en_title, pairs_list, word_map):
+    """用关键词对照表 + 阿里云翻译 综合生成标题翻译"""
+    if not word_map:
+        return None
+    
+    en_words = en_title.split()
+    en_lower = [w.strip(".!,:;!?()-_[]").lower() for w in en_words]
+    known_kws = [w for w in en_lower if w in word_map]
+    if not known_kws:
+        return None
+    
+    candidates = []
+    for item in pairs_list:
+        if not isinstance(item, dict):
+            continue
+        zh_para = (item.get("zh_para") or "").strip()
+        if not zh_para:
+            continue
+        for s in item.get("sentences", []):
+            en_str = (s.get("en") or "").strip()
+            if not en_str:
+                continue
+            en_kws_found = [w.strip(".!,:;!?()-_[]").lower() for w in en_str.split()
+                            if w.strip(".!,:;!?()-_[]").lower() in known_kws]
+            if en_kws_found:
+                candidates.append((en_str, zh_para, en_kws_found))
+    
+    if not candidates:
+        return None
+    
+    zh_sents = list(dict.fromkeys(zh for _, zh, _ in candidates))
+    aliyun_full = aliyun_translate_title(en_title)
+    
+    if not aliyun_full and zh_sents:
+        return polish_title(zh_sents[0])
+    
+    if not aliyun_full:
+        return None
+    
+    best_zh = ""
+    best_score = 0
+    for zh in zh_sents:
+        zh_kws = sum(1 for kw in known_kws if word_map.get(kw, "") in zh)
+        if zh_kws > best_score:
+            best_score = zh_kws
+            best_zh = zh
+    
+    if best_zh:
+        return polish_title(best_zh)
+    
+    return aliyun_full
+
+#============ 标题翻译 + D Link ============ #
+
+print(f"[translate_article] processing title for: {title_en[:60]}")
+
+# 标题翻译：阿里云优先（最可靠），失败再降级到 pairs/词表
+if title_cn == title_en or not any("一" <= c <= "鿿" for c in title_cn):
+    # 第1优先：阿里云直接翻译
+    t = aliyun_translate_title(title_en)
+    if t:
+        title_cn = polish_title(t)
+        print(f"[translate_article] 标题翻译: 阿里云翻译 -> {title_cn}")
+    else:
+        # 第2优先：从 pairs 找官方翻译
+        candidate = extract_title_cn_from_pairs(pairs, title_en)
+        if candidate:
+            title_cn = candidate
+            print(f"[translate_article] 标题翻译: 从 pairs 找到官方翻译 {candidate}")
+        else:
+            # 第3优先：关键词对照表综合翻译
+            word_map = build_key_word_map_from_pairs(pairs)
+            candidate = translate_title_with_word_map(title_en, pairs, word_map)
+            if candidate:
+                title_cn = candidate
+                print(f"[translate_article] 标题翻译: 关键词综合翻译 {candidate}")
+            # 如果全部失败，title_cn 保持英文 fallback
+
+# ============ 底部链接日期校验 (Post-validation) ============ #
+# 确保邮件底部的 sahaja_link 日期与文章日期匹配
+# 如果月份和日子不对，说明 IMA 知识库文档找错了
+if sahaja_link and date_str:
+    src_md, src_full = extract_date_from_url(sahaja_link)
+    article_md = date_str[5:] if len(date_str) >= 10 and date_str[4] == '-' else date_str
+    if src_md:
+        if src_md != article_md:
+            print(f'')
+            print(f'╔══════════════════════════════════════════════════════════════╗')
+            print(f'║  ⚠  IMA文档日期不匹配！                                     ║')
+            print(f'║  文章日期: {date_str}                                       ║')
+            print(f'║  IMA链接日期: {src_full}                                    ║')
+            print(f'║  底部链接: {sahaja_link[:80]}                              ║')
+            print(f'║  结论: IMA知识库可能返回了错误日期的文档                      ║')
+            print(f'║  状态: 使用 fallback，但翻译质量可能受影响                   ║')
+            print(f'╚══════════════════════════════════════════════════════════════╝')
+            print(f'')
+        else:
+            print(f'[translate_article] ✓ 底部链接日期校验通过: IMA链接={src_full}, 文章={date_str}')
+    else:
+        print(f'[translate_article] ? 底部链接无法提取日期，跳过校验: {sahaja_link[:80]}')
+
+final_link = sahaja_link or link
+
+# ============ HTML ============ #
+
+lines = []
+
+# 将多对一对齐的 EN 句合并到一个段落
+
+# 逻辑：如果多句 EN 匹配到同一句 ZH，这些 EN 句放在一起
+
+# 如果 EN 没有匹配 ZH，单独一行（无中文）
+
+# ============ 关系分类：1:1 / 1:M / M:1 ============ #
+from collections import defaultdict
+
+# ============ 构建配对 HTML（1:1 / 1:M / M:1 关系渲染） ============ #
+def rebuild_pair_html(pairs_list):
+    """从段落级结构重建 HTML 正文（段落内 M:1，N句英文 → 1段中文）"""
+    if not pairs_list:
+        return ""
+    lines_out = []
+    for item in pairs_list:
+        if not isinstance(item, dict):
+            continue
+        sentences = item.get("sentences", [])
+        if not sentences:
+            continue
+        zh_para = (item.get("zh_para") or "").strip()
+        en_list = [s.get("en", "") for s in sentences]
+        has_zh_sent = any((s.get("zh") or "").strip() for s in sentences)
+        if has_zh_sent:
+            for en_item in en_list:
+                lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en_item + '</p>')
+            lines_out.append('<p style="margin:0 0 14px 0;">' + zh_para + '</p>')
+        elif zh_para:
+            # zh_para has content even if sentence-level zh is empty (e.g., Aliyun fallback)
+            for en_item in en_list:
+                lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 2px 0;">' + en_item + '</p>')
+            lines_out.append('<p style="margin:0 0 14px 0;">' + zh_para + '</p>')
+        else:
+            for en_item in en_list:
+                lines_out.append('<p style="color:#888;font-size:0.85em;margin:0 0 14px 0;">' + en_item + '</p>')
+    return chr(10).join(lines_out)
+
+# ============ 第一次构建 pair_html（基于原始 pairs，会被去重后重建覆盖） ============
+pair_html = rebuild_pair_html(pairs)
+
+try:
+
+    from datetime import datetime as dt2
+
+    dt = dt2.strptime(date_str, "%Y-%m-%d")
+
+    dd = date_str
+
+except: dd = date_str
+
+link = sahaja_link or link
+amruta_link = link.replace("www.amruta.org", "amruta.today").replace("sahaja.live", "amruta.today") if link else ""  # 同步更新：link 已被 sahaja_link 覆盖，amruta_link 也要跟着变
+
+# ========== 语义去重（sentence-transformers） ==========
+# 规则：
+#   1. 用 LaBSE 做句子嵌入，余弦相似度 > THRESHOLD 视为重复
+#   2. 如果两个重复句子长度相同 → 去哪个都行（保留第一个）
+#   3. 如果长度不同 → 保留较长的，去除较短的
+# 不去动前面的对齐、翻译逻辑
+
+import numpy as np
+try:
+    from sentence_transformers import SentenceTransformer as STModel
+except ImportError:
+    STModel = None
+    print("[dedup] sentence_transformers not installed, skipping semantic dedup")
+
+DEDUP_THRESHOLD = 0.85  # 余弦相似度阈值，>0.85 视为重复
+DEDUP_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"  # 轻量级，384维
+
+# 加载模型（缓存已存在，首次下载后不再下载）
+# 超时控制：HuggingFace 可能被墙，15秒内连不上就直接跳过
+print(f"[dedup] Loading model: {DEDUP_MODEL_NAME}...")
+_DEDUP_MODEL_CACHE = os.environ.get("SENTENCE_TRANSFORMERS_CACHE", "")
+if _DEDUP_MODEL_CACHE:
+    os.environ["TRANSFORMERS_CACHE"] = _DEDUP_MODEL_CACHE
+    os.environ["HF_HOME"] = _DEDUP_MODEL_CACHE
+
+import threading
+_dedup_model = None
+def _load_model():
+    global _dedup_model
+    try:
+        _dedup_model = STModel(DEDUP_MODEL_NAME, device="cpu", trust_remote_code=True,
+                               local_files_only=False, cache_folder=None)
+        print(f"[dedup] Model loaded.")
+    except Exception as e:
+        print(f"[dedup] Model load failed ({e}), skipping semantic dedup.")
+        _dedup_model = None
+
+_loader_thread = threading.Thread(target=_load_model, daemon=True)
+_loader_thread.start()
+_loader_thread.join(timeout=15)
+if _loader_thread.is_alive():
+    print("[dedup] Model loading timed out (15s), HuggingFace unreachable, skipping semantic dedup.")
+    _dedup_model = None
+
+def cosine_sim(vec1, vec2):
+    a = np.array(vec1)
+    b = np.array(vec2)
+    dot = np.dot(a, b)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(dot / (norm_a * norm_b))
+
+def semantic_dedup(pairs_list, lang="zh"):
+    """对段落级结构做语义去重：
+       - lang="zh": 跨段落对 zh_para 去重（保留较长者）
+       - lang="en": 段落内对英文句子去重（保留较长者）
+    """
+    if _dedup_model is None:
+        print("[dedup] Model not loaded, skipping.")
+        return pairs_list, 0
+
+    if lang == "zh":
+        # 跨段落对 zh_para 去重
+        items = [(i, (item.get("zh_para") or "").strip()) for i, item in enumerate(pairs_list)]
+        non_empty = [(i, t) for i, t in items if t]
+        if len(non_empty) < 2:
+            return pairs_list, 0
+        texts = [t for _, t in non_empty]
+        embeddings = _dedup_model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
+        removed = set()
+        for a in range(len(non_empty)):
+            if a in removed:
+                continue
+            for b in range(a + 1, len(non_empty)):
+                if b in removed:
+                    continue
+                ta, tb = non_empty[a][1], non_empty[b][1]
+                if ta == tb or cosine_sim(embeddings[a], embeddings[b]) > DEDUP_THRESHOLD:
+                    idx = non_empty[a][0] if len(ta) <= len(tb) else non_empty[b][0]
+                    removed.add(idx)
+        if removed:
+            deduped = [p for i, p in enumerate(pairs_list) if i not in removed]
+            print(f"[dedup] Removed {len(removed)} duplicate {lang} paragraph(s). Remaining: {len(deduped)}")
+            return deduped, len(removed)
+        return pairs_list, 0
+
+    # lang="en": 段落内句子级去重
+    total = 0
+    for item in pairs_list:
+        sents = item.get("sentences", [])
+        target = [(si, (s.get("en") or "").strip()) for si, s in enumerate(sents) if (s.get("en") or "").strip()]
+        if len(target) < 2:
+            continue
+        texts = [t for _, t in target]
+        embeddings = _dedup_model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
+        removed = set()
+        for a in range(len(target)):
+            if target[a][0] in removed:
+                continue
+            for b in range(a + 1, len(target)):
+                if target[b][0] in removed:
+                    continue
+                ta, tb = target[a][1], target[b][1]
+                if ta == tb or cosine_sim(embeddings[a], embeddings[b]) > DEDUP_THRESHOLD:
+                    removed.add(target[a][0] if len(ta) <= len(tb) else target[b][0])
+        if removed:
+            item["sentences"] = [s for s in sents if s not in [sents[ri] for ri in removed]]
+            total += len(removed)
+    print(f"[dedup] Removed {total} duplicate {lang} sentence(s).")
+    return pairs_list, total
+
+# ===== 去重前先保存原始 pairs 到 pairs_archive.json =====
+print("\n[dedup] Saving original pairs to pairs_archive.json BEFORE dedup...")
+with open("/tmp/pairs_archive.json", "w", encoding="utf-8") as f:
+    json.dump(pairs, f, ensure_ascii=False, indent=2)
+
+# ===== 执行中文去重（主要目标） =====
+print(f"\n[dedup] === Starting semantic dedup ===")
+pairs, zh_removed = semantic_dedup(pairs, lang="zh")
+
+# ===== 再执行英文去重 =====
+pairs, en_removed = semantic_dedup(pairs, lang="en")
+
+print(f"\n[dedup] Summary: ZH removed: {zh_removed}, EN removed: {en_removed}")
+print(f"[dedup] Final pairs count: {len(pairs)}")
+
+# ===== 压平为旧格式输出（方案B：step3 兼容） =====
+flat_pairs = []
+for item in pairs:
+    for s in item.get("sentences", []):
+        flat_pairs.append([s.get("en", ""), s.get("zh", "")])
+
+# ===== 写入去重后的 pairs 到 pairs.json（供 step3 使用） =====
+with open("/tmp/pairs.json", "w", encoding="utf-8") as f:
+    json.dump(pairs, f, ensure_ascii=False, indent=2)
+with open("/tmp/pairs_flat.json", "w", encoding="utf-8") as f:
+    json.dump(flat_pairs, f, ensure_ascii=False, indent=2)
+print("[dedup] WRITTEN: deduped pairs saved to pairs.json (structured) and pairs_flat.json")
+
+# ===== 重建 pair_html（基于去重后的 pairs） =====
+pair_html = rebuild_pair_html(pairs)
+html = "<!DOCTYPE html><html><head><meta charset=utf-8><meta name=viewport content=width=device-width,initial-scale=1></head><body style=font-family:Helvetica Neue,Arial,sans-serif;max-width:680px;margin:0 auto;padding:24px 16px;color:#222;line-height:1.7;>"
+
+html += "<h2 style=margin:0 0 4px 0;font-size:1.25em;font-weight:700;>" + str(title_cn) + "</h2>"
+
+html += "<p style=color:#888;font-size:0.85em;margin:0 0 4px 0;font-style:italic;>" + str(title_en) + "</p>"
+
+html += "<p style=color:#aaa;font-size:0.8em;margin:0 0 24px 0;>" + dd + "</p>"
+
+html += "<hr style=border:none;border-top:1px solid #eee;margin:0 0 24px 0;>"
+
+html += pair_html
+
+html += "<hr style=border:none;border-top:1px solid #eee;margin:24px 0 16px 0;>"
+
+# 底部链接（只留两个，不附加其他内容）
+html += "<p style=color:#aaa;font-size:0.8em;margin:0;word-break:break-all;>"
+# 第一个链接：amruta.today（固定不变，永远就是这个 URL）
+first_link = "https://amruta.today/"
+html += "<a href=\"" + first_link + "\" style=color:#aaa; target=_blank rel=noopener>" + first_link + "</a>"
+html += "<br>"
+# 第二个链接：sahaja.live（从中文文档 source 字段提取）
+second_link = (ima_kb_source_url or sahaja_link) or "https://sahaja.live/"
+html += "<a href=\"" + second_link + "\" style=color:#aaa;>" + second_link + "</a>"
+html += "</p>"
+
+html += "</body></html>"
+
+with open("/tmp/email_body.html", "w", encoding="utf-8") as f:
+
+    f.write(html)
+
+with open("/tmp/sahaja_link.txt", "w", encoding="utf-8") as f:
+
+    f.write(link or "")
+
+# 写入 IMA KB 文档标题（供验收/审核用）
+with open("/tmp/ima_kb_doc_title.txt", "w", encoding="utf-8") as f:
+    f.write(ima_kb_doc_title)
+
+# 写入 IMA KB source URL（真实的 sahaja.live 链接，不是 amruta.today）
+with open("/tmp/ima_kb_source_url.txt", "w", encoding="utf-8") as f:
+    f.write(ima_kb_source_url or sahaja_link or "")
+
+print(f"[translate_article] HTML done, {len(pairs)} pairs")
