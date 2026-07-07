@@ -8,7 +8,7 @@ import os
 
 # 读取文章
 with open("article_raw.json", "r", encoding="utf-8") as f:
-    article = json.load(f)[0]
+    article = json.load(f)
 
 en_title = article["title"]
 en_content = article["content"]

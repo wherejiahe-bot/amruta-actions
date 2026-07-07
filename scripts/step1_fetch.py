@@ -1,47 +1,79 @@
+#!/usr/bin/env python3
 """
-Step 1: Fetch today's article from amruta.today API.
-Output: /tmp/article_raw.json
+Step1: 从 amruta.today 抓取指定日期的文章
+只抓取 amruta.today 当天显示的内容，不多不少
+用法: python step1_fetch.py <日期>
+例: python step1_fetch.py 1981-07-05
 """
-import urllib.request, json, re, datetime, os
+import json
+import subprocess
+import sys
+import re
 
-override_str = os.environ.get("DATE_OVERRIDE", "")
-if override_str:
-    parts = override_str.split("-")
-    cn = datetime.datetime(int(parts[0]), int(parts[1]), int(parts[2]))
-else:
-    cn = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-month = str(cn.month).zfill(2)
-day = str(cn.day).zfill(2)
-date_str = cn.strftime("%Y-%m-%d")
+print(f"=== Step1: 从 amruta.today 抓取文章 ===")
 
-url = f"https://amruta.today/wp-json/everyday-ui/v1/talks/lang/en/month/{month}/day/{day}"
-print(f"Fetching: {url}")
+if len(sys.argv) < 2:
+    print(f"  用法: python step1_fetch.py <日期>")
+    print(f"  例: python step1_fetch.py 1981-07-05")
+    sys.exit(1)
 
-req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-with urllib.request.urlopen(req, timeout=15) as resp:
-    data = json.loads(resp.read().decode("utf-8"))
+date_str = sys.argv[1]
+print(f"日期: {date_str}")
 
-if not data:
-    raise ValueError(f"API returned empty for {date_str}")
+# 第一步：搜索文章
+cmd = f'curl -s "https://amruta.today/wp-json/wp/v2/daily-talks?per_page=100"'
+result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
-item = data[0]
-title = item.get("title", "")
-if isinstance(title, dict):
-    title = title.get("rendered", "")
+if result.returncode != 0:
+    print(f"  ❌ curl 失败: {result.stderr}")
+    sys.exit(1)
 
-raw_date = item.get("date", date_str)
-date_clean = raw_date.split(" ")[0] if " " in raw_date else raw_date[:10]
+try:
+    articles = json.loads(result.stdout)
+except json.JSONDecodeError:
+    print(f"  ❌ 响应不是有效的 JSON")
+    sys.exit(1)
 
-content_raw = item.get("content", "")
-if isinstance(content_raw, dict):
-    content_raw = content_raw.get("rendered", "")
-content_text = re.sub(r"<[^>]+>", "", content_raw).strip()
-link = item.get("link", "")
-# amruta.today 为永久链接，amruta.org 为旧短暂链接
-link = link.replace("www.amruta.org", "amruta.today") if link else ""
+# 找到匹配日期的文章
+article = None
+for a in articles:
+    if a.get("date", "").startswith(date_str):
+        article = a
+        break
 
-article = {"date": date_clean, "title": title, "content": content_text, "link": link}
-with open("/tmp/article_raw.json", "w", encoding="utf-8") as f:
-    json.dump(article, f, ensure_ascii=False, indent=2)
+if not article:
+    print(f"  ❌ amruta.today 上没有 {date_str} 的文章")
+    sys.exit(1)
 
-print(f"✅ Step1: {date_clean} — {title}")
+# 通过 ID 获取完整内容
+article_id = article["id"]
+cmd2 = f'curl -s "https://amruta.today/wp-json/wp/v2/daily-talks/{article_id}"'
+result2 = subprocess.run(cmd2, shell=True, capture_output=True, text=True)
+article = json.loads(result2.stdout)
+
+title = article.get("title", {}).get("rendered", "")
+content_html = article.get("content", {}).get("rendered", "")
+link = article.get("link", "")
+external_link = article.get("acf", {}).get("external_link", "")
+
+# 提取纯文本内容
+clean_content = re.sub(r'<[^>]+>', '', content_html).strip()
+
+print(f"  ✅ 抓取成功!")
+print(f"  标题: {title}")
+print(f"  内容长度: {len(clean_content)} 字符")
+print(f"  链接: {link}")
+
+# 保存
+output = {
+    "date": date_str,
+    "title": title,
+    "content": clean_content,
+    "link": link,
+    "source": external_link or link
+}
+
+with open("article_raw.json", "w", encoding="utf-8") as f:
+    json.dump(output, f, ensure_ascii=False, indent=2)
+
+print(f"  ✅ 已保存到 article_raw.json")

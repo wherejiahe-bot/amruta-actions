@@ -7,6 +7,7 @@ import json
 import re
 import urllib.request
 import ssl
+import os
 
 API_KEY = "sk-3FrasinsJMpf3aRS8pfeD5qRNcMj13V6dFEA0TplquHIJPsk"
 BASE_URL = "https://apihub.agnes-ai.com/v1"
