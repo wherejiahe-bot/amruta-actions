@@ -16,11 +16,14 @@ if not smtp_user or not smtp_pass:
 
 with open("/tmp/article_raw.json", encoding="utf-8") as f:
     article = json.load(f)
-with open("/tmp/email_body.html", encoding="utf-8") as f:
-    html_body = f.read()
 
 date = article["date"]
 subject = f"每日 Shri Mataji 讲话推送 - {date}"
+
+# 从项目目录读取最新内容
+with open("email_body.html", "r", encoding="utf-8") as f:
+    html_body = f.read()
+print(f"  ✅ 从 email_body.html 获取内容 ({len(html_body)} 字符)")
 
 msg = MIMEMultipart("alternative")
 msg["Subject"] = Header(subject, "utf-8")
